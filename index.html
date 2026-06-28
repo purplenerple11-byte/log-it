@@ -3,21 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#0a0a0a">
+  <meta name="theme-color" content="#121316">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Log It</title>
   <style>
     :root {
-      --bg:       #0a0a0a;
-      --surface:  #141414;
-      --surface2: #1c1c1c;
-      --border:   #2a2a2a;
-      --text:     #f0f0f0;
-      --dim:      #666;
-      --red:      #e63946;
+      --bg:       #121316;
+      --surface:  #1e1f24;
+      --surface2: #2a2b32;
+      --border:   #33353d;
+      --text:     #f4f4f5;
+      --dim:      #a1a1aa;
+      --action:   #cc785c; /* Updated to the exact provided color */
       --green:    #22c55e;
+      --toggle-bg: #f1f0ea;
+      --toggle-text: #111111;
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -40,21 +42,20 @@
       justify-content: center;
       min-height: 100dvh;
       padding: 32px 24px;
-      gap: 32px;
+      gap: 28px;
     }
 
-    /* ── STATUS ── */
+    /* ── STATUS (Now acts as the main heading) ── */
     #status {
-      font-size: 13px;
-      font-weight: 500;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-      color: var(--dim);
-      min-height: 20px;
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--text);
+      min-height: 44px;
       text-align: center;
       transition: color .2s;
+      letter-spacing: -0.02em;
     }
-    #status.recording { color: var(--red); }
+    #status.recording { color: var(--action); }
 
     /* ── MIC BUTTON ── */
     #mic-wrap {
@@ -62,53 +63,67 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      margin: 20px 0;
     }
 
     .pulse {
       position: absolute;
       border-radius: 50%;
-      border: 1.5px solid var(--red);
+      border: 2px solid rgba(255, 255, 255, 0.15);
       pointer-events: none;
-      opacity: 0;
+      transition: border-color 0.3s;
     }
-    .pulse:nth-child(1) { width: 96px;  height: 96px;  }
-    .pulse:nth-child(2) { width: 126px; height: 126px; }
-    .pulse:nth-child(3) { width: 158px; height: 158px; }
+    .pulse:nth-child(1) { width: 110px; height: 110px; opacity: 1; }
+    .pulse:nth-child(2) { width: 140px; height: 140px; opacity: 0.6; }
+    .pulse:nth-child(3) { width: 170px; height: 170px; opacity: 0.3; }
 
     @keyframes ring-out {
-      0%   { transform: scale(.85); opacity: .55; }
-      100% { transform: scale(1.2); opacity: 0;   }
+      0%   { transform: scale(.85); opacity: .8; }
+      100% { transform: scale(1.3); opacity: 0;   }
     }
+    
+    .recording .pulse { border-color: var(--action); opacity: 0; }
     .recording .pulse:nth-child(1) { animation: ring-out 1.5s ease-out        infinite; }
     .recording .pulse:nth-child(2) { animation: ring-out 1.5s ease-out  .3s   infinite; }
     .recording .pulse:nth-child(3) { animation: ring-out 1.5s ease-out  .6s   infinite; }
 
     #mic-btn {
       position: relative; z-index: 1;
-      width: 84px; height: 84px;
+      width: 90px; height: 90px;
       border-radius: 50%;
-      border: 1.5px solid var(--border);
-      background: var(--surface2);
+      border: 3px solid var(--text);
+      background: var(--bg);
       display: flex; align-items: center; justify-content: center;
       cursor: pointer;
-      touch-action: none;
-      color: var(--dim);
-      transition: background .15s, border-color .15s, color .15s;
+      touch-action: manipulation;
+      color: var(--text);
+      transition: background .2s, border-color .2s, color .2s, transform 0.1s;
     }
+    #mic-btn:active { transform: scale(0.96); }
     #mic-btn.recording {
-      background: var(--red);
-      border-color: var(--red);
+      background: var(--action);
+      border-color: var(--action);
       color: #fff;
     }
     #mic-btn svg { pointer-events: none; }
 
+    /* ── HINT ── */
+    #hint {
+      font-size: 17px;
+      color: var(--dim);
+      text-align: center;
+      white-space: nowrap;
+      margin-top: -10px;
+      margin-bottom: 10px;
+    }
+
     /* ── TRANSCRIPT ── */
     #transcript {
-      font-size: 15px;
+      font-size: 16px;
       color: var(--dim);
       text-align: center;
       max-width: 300px;
-      min-height: 22px;
+      min-height: 24px;
       line-height: 1.6;
       font-style: italic;
     }
@@ -116,24 +131,31 @@
     /* ── MODE TOGGLE ── */
     #mode-toggle {
       display: flex;
-      background: var(--surface);
-      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.06);
       border-radius: 100px;
-      padding: 3px;
+      padding: 5px;
+      margin-top: 10px;
     }
     .mode-btn {
-      padding: 7px 20px;
+      padding: 10px 24px;
       border-radius: 100px;
       border: none;
       background: transparent;
       color: var(--dim);
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 500;
       cursor: pointer;
-      transition: background .15s, color .15s;
+      transition: background .2s, color .2s;
       white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
-    .mode-btn.active { background: var(--surface2); color: var(--text); }
+    .mode-btn.active { 
+      background: var(--toggle-bg); 
+      color: var(--toggle-text); 
+      font-weight: 600;
+    }
 
     /* ── TEXT INPUT ── */
     #text-wrap {
@@ -141,18 +163,18 @@
       max-width: 340px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 12px;
     }
     #text-input {
       width: 100%;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 16px;
       color: var(--text);
       font-size: 16px;
-      padding: 14px 16px;
+      padding: 16px;
       resize: none;
-      min-height: 96px;
+      min-height: 120px;
       font-family: inherit;
       line-height: 1.5;
       outline: none;
@@ -160,48 +182,35 @@
       user-select: text;
       transition: border-color .15s;
     }
-    #text-input:focus { border-color: #3a3a3a; }
-    #text-input::placeholder { color: #333; }
+    #text-input:focus { border-color: var(--dim); }
+    #text-input::placeholder { color: #555; }
 
     #send-btn {
       background: var(--surface2);
-      border: 1px solid var(--border);
+      border: none;
       color: var(--text);
-      border-radius: 12px;
-      padding: 14px;
-      font-size: 15px;
-      font-weight: 500;
+      border-radius: 14px;
+      padding: 16px;
+      font-size: 16px;
+      font-weight: 600;
       cursor: pointer;
-      transition: background .15s;
+      transition: background .15s, color 0.15s;
     }
-    #send-btn:active { background: #2a2a2a; }
-
-    /* ── HINT ── */
-    #hint {
-      font-size: 12px;
-      color: #2e2e2e;
-      letter-spacing: .04em;
-      text-align: center;
-      position: fixed;
-      bottom: 28px;
-      left: 50%;
-      transform: translateX(-50%);
-      white-space: nowrap;
-    }
+    #send-btn:active { background: var(--action); color: #fff; }
 
     /* ── GEAR BUTTON ── */
     #gear-btn {
       position: fixed;
-      top: 18px; right: 18px;
+      top: 20px; right: 20px;
       background: none;
       border: none;
-      color: #2e2e2e;
+      color: var(--dim);
       cursor: pointer;
       padding: 8px;
       border-radius: 8px;
       transition: color .15s;
     }
-    #gear-btn:active { color: #666; }
+    #gear-btn:active { color: var(--text); }
 
     /* ── CONFIRM CARD ── */
     #confirm-card {
@@ -209,122 +218,123 @@
       bottom: 0; left: 0; right: 0;
       background: var(--surface);
       border-top: 1px solid var(--border);
-      border-radius: 20px 20px 0 0;
-      padding: 22px 24px 40px;
+      border-radius: 24px 24px 0 0;
+      padding: 24px 24px 44px;
       transform: translateY(110%);
-      transition: transform .38s cubic-bezier(0.34, 1.56, 0.64, 1);
+      transition: transform .4s cubic-bezier(0.34, 1.56, 0.64, 1);
       z-index: 100;
       cursor: pointer;
+      box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
     }
     #confirm-card.show { transform: translateY(0); }
-    #card-icon { font-size: 28px; display: block; margin-bottom: 8px; }
-    #card-msg  { font-size: 16px; font-weight: 500; }
-    #card-sub  { font-size: 13px; color: var(--dim); margin-top: 4px; }
+    #card-icon { font-size: 28px; display: block; margin-bottom: 8px; color: var(--action); }
+    #card-msg  { font-size: 18px; font-weight: 600; color: var(--text); }
+    #card-sub  { font-size: 14px; color: var(--dim); margin-top: 4px; }
     #card-bar  {
-      height: 3px; border-radius: 2px;
+      height: 4px; border-radius: 2px;
       background: var(--border);
-      margin-top: 16px; overflow: hidden;
+      margin-top: 20px; overflow: hidden;
     }
-    #card-fill { height: 100%; width: 0%; border-radius: 2px; }
+    #card-fill { height: 100%; width: 0%; border-radius: 2px; background: var(--action) !important; }
 
     /* ── ERROR TOAST ── */
     #err-toast {
       position: fixed;
       bottom: 24px; left: 16px; right: 16px;
-      background: #1e0a0a;
-      border: 1px solid #5a1a1a;
-      border-radius: 12px;
-      padding: 13px 16px;
-      color: #e07070;
-      font-size: 14px;
+      background: #2a1111;
+      border: 1px solid #7f1d1d;
+      border-radius: 14px;
+      padding: 16px;
+      color: #fca5a5;
+      font-size: 15px;
       display: none;
       z-index: 200;
       line-height: 1.4;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
 
     /* ── CONFIG PANEL ── */
     #cfg-overlay {
       position: fixed; inset: 0;
-      background: rgba(0,0,0,.72);
+      background: rgba(0,0,0,.8);
       z-index: 300;
       display: none;
-      backdrop-filter: blur(3px);
+      backdrop-filter: blur(4px);
     }
     #cfg-panel {
       position: fixed;
       top: 0; right: -100%; bottom: 0;
-      width: min(340px, 92vw);
+      width: min(360px, 92vw);
       background: var(--surface);
       border-left: 1px solid var(--border);
       z-index: 301;
       overflow-y: auto;
-      padding: 28px 20px 48px;
+      padding: 32px 24px 48px;
       transition: right .3s cubic-bezier(.4,0,.2,1);
     }
     #cfg-panel.open { right: 0; }
 
     .cfg-head {
       display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 24px;
+      margin-bottom: 28px;
     }
-    .cfg-head h2 { font-size: 17px; font-weight: 600; }
+    .cfg-head h2 { font-size: 20px; font-weight: 600; color: var(--text); }
     #cfg-close {
       background: none; border: none;
-      color: var(--dim); font-size: 20px;
+      color: var(--dim); font-size: 24px;
       cursor: pointer; padding: 4px 8px;
     }
     .cfg-section {
-      font-size: 10px; font-weight: 700;
-      letter-spacing: .14em; text-transform: uppercase;
-      color: #444; margin: 20px 0 10px;
+      font-size: 11px; font-weight: 700;
+      letter-spacing: .1em; text-transform: uppercase;
+      color: var(--dim); margin: 24px 0 12px;
     }
-    .cfg-field { margin-bottom: 14px; }
+    .cfg-field { margin-bottom: 16px; }
     .cfg-label {
       display: block;
-      font-size: 12px; font-weight: 500;
-      color: var(--dim); margin-bottom: 6px;
+      font-size: 13px; font-weight: 500;
+      color: var(--text); margin-bottom: 8px;
     }
     .cfg-input {
       width: 100%;
-      background: var(--surface2);
+      background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 10px;
       color: var(--text);
-      font-size: 13px;
+      font-size: 14px;
       font-family: 'Menlo', 'Consolas', monospace;
-      padding: 10px 12px;
+      padding: 12px 14px;
       outline: none;
       -webkit-appearance: none;
       user-select: text;
       transition: border-color .15s;
     }
-    .cfg-input:focus { border-color: #3a3a3a; }
+    .cfg-input:focus { border-color: var(--dim); }
 
     .cfg-note {
-      font-size: 12px;
-      color: #444;
+      font-size: 13px;
+      color: var(--dim);
       line-height: 1.5;
-      margin-top: -6px;
-      margin-bottom: 14px;
+      margin-top: -8px;
+      margin-bottom: 16px;
     }
-    .cfg-note a { color: #666; }
 
     #save-btn {
-      width: 100%; margin-top: 10px;
+      width: 100%; margin-top: 16px;
       background: var(--surface2);
-      border: 1px solid var(--border);
+      border: none;
       color: var(--text);
-      border-radius: 10px;
-      padding: 14px;
-      font-size: 15px; font-weight: 500;
+      border-radius: 12px;
+      padding: 16px;
+      font-size: 16px; font-weight: 600;
       cursor: pointer;
       transition: background .15s;
     }
-    #save-btn:active { background: #2a2a2a; }
+    #save-btn:active { background: var(--action); color: #fff; }
     #save-ok {
-      text-align: center; font-size: 13px;
-      color: var(--green); margin-top: 8px;
-      display: none;
+      text-align: center; font-size: 14px;
+      color: var(--green); margin-top: 12px;
+      display: none; font-weight: 500;
     }
 
     .hidden { display: none !important; }
@@ -333,30 +343,34 @@
 <body>
 
 <div id="app">
-  <div id="status">Hold to log</div>
+  <div id="status">Tap to log</div>
 
   <div id="mic-wrap">
     <div class="pulse"></div>
     <div class="pulse"></div>
     <div class="pulse"></div>
-    <button id="mic-btn" aria-label="Hold to record">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="1.8"
-           stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-        <line x1="12" y1="19" x2="12" y2="23"/>
-        <line x1="8"  y1="23" x2="16" y2="23"/>
+    <button id="mic-btn" aria-label="Tap to record" onclick="toggleRecording()">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
       </svg>
     </button>
   </div>
 
-  <div id="transcript"></div>
+  <div id="hint">speak naturally — it figures out the rest</div>
 
   <div id="mode-toggle">
-    <button class="mode-btn active" id="btn-voice" onclick="setMode('voice')">🎤 Voice</button>
-    <button class="mode-btn"        id="btn-text"  onclick="setMode('text')">⌨️ Type</button>
+    <button class="mode-btn active" id="btn-voice" onclick="setMode('voice')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+      Voice
+    </button>
+    <button class="mode-btn" id="btn-text" onclick="setMode('text')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect><line x1="6" y1="8" x2="6.01" y2="8"></line><line x1="10" y1="8" x2="10.01" y2="8"></line><line x1="14" y1="8" x2="14.01" y2="8"></line><line x1="18" y1="8" x2="18.01" y2="8"></line><line x1="6" y1="12" x2="6.01" y2="12"></line><line x1="10" y1="12" x2="10.01" y2="12"></line><line x1="14" y1="12" x2="14.01" y2="12"></line><line x1="18" y1="12" x2="18.01" y2="12"></line><line x1="8" y1="16" x2="16" y2="16"></line></svg>
+      Type
+    </button>
   </div>
+
+  <div id="transcript"></div>
 
   <div id="text-wrap" class="hidden">
     <textarea id="text-input"
@@ -366,10 +380,8 @@
   </div>
 </div>
 
-<div id="hint">speak naturally — it figures out the rest</div>
-
 <button id="gear-btn" onclick="openConfig()" aria-label="Settings">
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
        stroke="currentColor" stroke-width="1.8">
     <circle cx="12" cy="12" r="3"/>
     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06
@@ -384,7 +396,6 @@
   </svg>
 </button>
 
-<!-- CONFIRMATION CARD -->
 <div id="confirm-card" onclick="dismissConfirm()">
   <span id="card-icon">✓</span>
   <div id="card-msg">Logged</div>
@@ -392,12 +403,10 @@
   <div id="card-bar"><div id="card-fill"></div></div>
 </div>
 
-<!-- ERROR TOAST -->
 <div id="err-toast">
   <strong>⚠ </strong><span id="err-msg">Something went wrong</span>
 </div>
 
-<!-- CONFIG PANEL -->
 <div id="cfg-overlay" onclick="closeConfig()"></div>
 <div id="cfg-panel">
   <div class="cfg-head">
@@ -412,8 +421,7 @@
            placeholder="https://script.google.com/macros/s/…/exec">
   </div>
   <p class="cfg-note">
-    Your Gemini API key lives securely in Apps Script → Project Settings → Script Properties.
-    It never touches this app.
+    Your Gemini API key lives securely in Apps Script. It never touches this app.
   </p>
 
   <div class="cfg-section">Sheet IDs</div>
@@ -438,7 +446,7 @@
     <input type="text" class="cfg-input" id="cfg-car" placeholder="Sheet ID">
   </div>
 
-  <button id="save-btn" onclick="saveConfig()">Save</button>
+  <button id="save-btn" onclick="saveConfig()">Save Settings</button>
   <div id="save-ok">✓ Saved</div>
 </div>
 
@@ -523,7 +531,7 @@ function setMode(m) {
   document.getElementById('hint').classList.toggle('hidden',      m === 'text');
   document.getElementById('text-wrap').classList.toggle('hidden', m === 'voice');
   document.getElementById('transcript').textContent = '';
-  setStatus(m === 'voice' ? 'Hold to log' : 'Type your entry');
+  setStatus(m === 'voice' ? 'Tap to log' : 'Type your entry');
 }
 
 // ================================================================
@@ -568,6 +576,14 @@ function initSpeech() {
   };
 }
 
+function toggleRecording() {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+}
+
 function startRecording() {
   if (isRecording || !recognition) return;
   if (!validateConfig()) return;
@@ -592,16 +608,8 @@ function stopRecordingUI() {
   isRecording = false;
   document.getElementById('mic-btn').classList.remove('recording');
   document.getElementById('mic-wrap').classList.remove('recording');
-  setStatus(mode === 'voice' ? 'Hold to log' : 'Type your entry');
+  setStatus(mode === 'voice' ? 'Tap to log' : 'Type your entry');
 }
-
-// Mic button — touch + mouse
-const micBtn = document.getElementById('mic-btn');
-micBtn.addEventListener('touchstart',  (e) => { e.preventDefault(); startRecording(); }, { passive: false });
-micBtn.addEventListener('touchend',    (e) => { e.preventDefault(); stopRecording();  }, { passive: false });
-micBtn.addEventListener('touchcancel', (e) => { e.preventDefault(); stopRecording();  }, { passive: false });
-micBtn.addEventListener('mousedown',   startRecording);
-document.addEventListener('mouseup',   () => { if (isRecording) stopRecording(); });
 
 // ================================================================
 // TEXT MODE
@@ -632,7 +640,7 @@ function validateConfig() {
 }
 
 // ================================================================
-// CORE FLOW — just one network call now
+// CORE FLOW
 // ================================================================
 async function processEntry(text) {
   setStatus('Thinking…');
@@ -643,20 +651,19 @@ async function processEntry(text) {
     showConfirm(result.category, result.sub_route, result.message);
     setStatus('Logged ✓');
     setTimeout(() => {
-      setStatus(mode === 'voice' ? 'Hold to log' : 'Type your entry');
+      setStatus(mode === 'voice' ? 'Tap to log' : 'Type your entry');
       document.getElementById('transcript').textContent = '';
     }, 3800);
 
   } catch (err) {
     showError(err.message || 'Something went wrong');
-    setStatus(mode === 'voice' ? 'Hold to log' : 'Type your entry');
+    setStatus(mode === 'voice' ? 'Tap to log' : 'Type your entry');
     document.getElementById('transcript').textContent = '';
   }
 }
 
 // ================================================================
 // SINGLE FETCH TO APPS SCRIPT
-// The script handles Gemini + Sheets. We just send text + sheet IDs.
 // ================================================================
 async function callRouter(text) {
   const url = LS.get('router_url');
@@ -672,7 +679,6 @@ async function callRouter(text) {
     }
   };
 
-  // text/plain avoids a CORS pre-flight on the Apps Script endpoint
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -685,7 +691,7 @@ async function callRouter(text) {
   const data = await res.json();
   if (!data.success) throw new Error(data.error || 'Something went wrong');
 
-  return data; // { success, message, category, sub_route }
+  return data;
 }
 
 // ================================================================
@@ -706,7 +712,6 @@ function showConfirm(category, sub_route, message) {
   document.getElementById('card-sub').textContent  = cfg.label;
 
   const fill = document.getElementById('card-fill');
-  fill.style.background = cfg.color;
   fill.style.transition = 'none';
   fill.style.width      = '0%';
 
