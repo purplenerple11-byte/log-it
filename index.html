@@ -665,6 +665,7 @@ function renderTodayView(deps = {}) {
 function toggleTodayExpanded() {
   const row = document.getElementById('today-row');
   if (!row) return;
+  renderTodayView();
   const expanded = row.classList.toggle('expanded');
   row.setAttribute('aria-expanded', String(expanded));
   const hint = document.getElementById('today-hint');
