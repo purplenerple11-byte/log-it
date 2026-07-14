@@ -39,9 +39,9 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
       min-height: 100dvh;
-      padding: 32px 24px;
+      padding: 8vh 24px 40px;
       gap: 28px;
     }
 
@@ -881,6 +881,7 @@ async function processEntry(text) {
       onRetrying: () => setStatus('Connection hiccup — retrying…')
     });
     showConfirm(result.category, result.sub_route, result.message);
+    recordTodayLog(result.category, result.sub_route, result.message, text);
     setStatus('Logged ✓');
     pendingEntry = null;
     clearInputs();
