@@ -718,6 +718,28 @@ async function callRouter(text, deps = {}) {
 }
 
 // ================================================================
+// RETRY STATE MACHINE
+// ================================================================
+async function submitWithRetry(text, deps = {}, hooks = {}) {
+  const router = deps.router || callRouter;
+  const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const maxAttempts = deps.maxAttempts ?? SUBMIT_MAX_ATTEMPTS;
+
+  let attempt = 0;
+  while (true) {
+    attempt++;
+    try {
+      return await router(text, deps);
+    } catch (err) {
+      const canRetry = isTransient(err) && attempt < maxAttempts;
+      if (!canRetry) throw err;
+      if (hooks.onRetrying) hooks.onRetrying(attempt);
+      await sleep(nextBackoffMs(attempt));
+    }
+  }
+}
+
+// ================================================================
 // UI HELPERS
 // ================================================================
 function setStatus(text, cls) {
@@ -880,6 +902,65 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     });
     try { await callRouter('hi', { fetchImpl: fake, timeoutMs: 50 }); assert(false, 'should throw'); }
     catch (e) { assertEq(e.kind, 'timeout'); }
+  });
+
+  // helper: router that yields scripted outcomes
+  function scriptedRouter(outcomes) {
+    let i = 0;
+    return async () => {
+      const o = outcomes[i++];
+      if (o instanceof Error) throw o;
+      return o;
+    };
+  }
+  test('submitWithRetry: succeeds first try (no sleep, no retry)', async () => {
+    const sleeps = [];
+    const data = await submitWithRetry('hi', {
+      router: scriptedRouter([{ success: true, message: 'ok' }]),
+      sleep: (ms) => { sleeps.push(ms); return Promise.resolve(); }
+    });
+    assertEq(data.message, 'ok');
+    assertEq(sleeps.length, 0);
+  });
+  test('submitWithRetry: transient then success (retries once, waits 1000)', async () => {
+    const sleeps = []; let retried = 0;
+    const data = await submitWithRetry('hi', {
+      router: scriptedRouter([new SubmitError('network', 'x'), { success: true, message: 'ok' }]),
+      sleep: (ms) => { sleeps.push(ms); return Promise.resolve(); }
+    }, { onRetrying: () => retried++ });
+    assertEq(data.message, 'ok');
+    assertEq(retried, 1);
+    assertEq(sleeps[0], 1000);
+  });
+  test('submitWithRetry: 3 transient -> throws after 3 attempts', async () => {
+    const sleeps = [];
+    try {
+      await submitWithRetry('hi', {
+        router: scriptedRouter([
+          new SubmitError('timeout', 'x'),
+          new SubmitError('timeout', 'x'),
+          new SubmitError('timeout', 'x')
+        ]),
+        sleep: (ms) => { sleeps.push(ms); return Promise.resolve(); }
+      });
+      assert(false, 'should throw');
+    } catch (e) {
+      assertEq(e.kind, 'timeout');
+      assertEq(sleeps.length, 2); // waited before attempt 2 and 3 only
+    }
+  });
+  test('submitWithRetry: permanent throws immediately (no retry)', async () => {
+    const sleeps = [];
+    try {
+      await submitWithRetry('hi', {
+        router: scriptedRouter([new SubmitError('server', 'nope'), { success: true }]),
+        sleep: (ms) => { sleeps.push(ms); return Promise.resolve(); }
+      });
+      assert(false, 'should throw');
+    } catch (e) {
+      assertEq(e.kind, 'server');
+      assertEq(sleeps.length, 0);
+    }
   });
   runTests();
 }
