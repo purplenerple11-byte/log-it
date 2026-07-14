@@ -676,7 +676,7 @@ function submitText() {
   if (!text) return;
   if (!validateConfig()) return;
   processEntry(text);
-  input.value = '';
+  // input is cleared only on confirmed success (see processEntry -> clearInputs)
 }
 
 document.getElementById('text-input').addEventListener('keydown', (e) => {
@@ -699,23 +699,36 @@ function validateConfig() {
 // CORE FLOW
 // ================================================================
 async function processEntry(text) {
+  pendingEntry = text;
+  hideFailCard();
   setStatus('Thinking…');
   document.getElementById('transcript').textContent = text;
 
+  const deps = {};
+  if (window.__testRouter) deps.router = window.__testRouter;
+  if (window.__testSleep)  deps.sleep  = window.__testSleep;
+
   try {
-    const result = await callRouter(text);
+    const result = await submitWithRetry(text, deps, {
+      onRetrying: () => setStatus('Connection hiccup — retrying…')
+    });
     showConfirm(result.category, result.sub_route, result.message);
     setStatus('Logged ✓');
+    pendingEntry = null;
+    clearInputs();
     setTimeout(() => {
       setStatus(mode === 'voice' ? 'Tap to log' : 'Type your entry');
       document.getElementById('transcript').textContent = '';
     }, 3800);
-
   } catch (err) {
-    showError(err.message || 'Something went wrong');
     setStatus(mode === 'voice' ? 'Tap to log' : 'Type your entry');
-    document.getElementById('transcript').textContent = '';
+    showFailCard(text, err);
   }
+}
+
+function clearInputs() {
+  const input = document.getElementById('text-input');
+  if (input) input.value = '';
 }
 
 // ================================================================
@@ -909,7 +922,10 @@ function assertEq(actual, expected, msg) {
   if (actual !== expected) throw new Error((msg ? msg + ': ' : '') + 'expected ' + expected + ' got ' + actual);
 }
 async function runTests() {
-  document.body.innerHTML = '';
+  // Hide the app but keep the DOM intact — integration tests manipulate real
+  // elements (text-input, fail-card). Wiping the body would delete them.
+  const app = document.getElementById('app');
+  if (app) app.style.display = 'none';
   const out = document.createElement('pre');
   out.style.cssText = 'padding:16px;font:13px Menlo,monospace;color:#f4f4f5;white-space:pre-wrap';
   document.body.appendChild(out);
@@ -1053,6 +1069,35 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   });
   test('failReason: server uses its message', () => {
     assertEq(failReason(new SubmitError('server', 'router said no')), 'router said no');
+  });
+  test('processEntry: success clears pendingEntry and text input', async () => {
+    document.getElementById('text-input').value = 'buy milk';
+    window.__testRouter = async () => ({ success: true, category: 'grocery', sub_route: '', message: 'Milk logged.' });
+    window.__testSleep = () => Promise.resolve();
+    await processEntry('buy milk');
+    assertEq(pendingEntry, null);
+    assertEq(document.getElementById('text-input').value, '');
+    delete window.__testRouter; delete window.__testSleep;
+  });
+  test('processEntry: permanent failure keeps pendingEntry + shows fail card', async () => {
+    document.getElementById('text-input').value = 'weird entry';
+    window.__testRouter = async () => { throw new SubmitError('server', 'router rejected'); };
+    window.__testSleep = () => Promise.resolve();
+    await processEntry('weird entry');
+    assertEq(pendingEntry, 'weird entry');
+    assert(document.getElementById('fail-card').classList.contains('show'), 'fail card should show');
+    assertEq(document.getElementById('fail-text').textContent, 'weird entry');
+    hideFailCard();
+    delete window.__testRouter; delete window.__testSleep;
+  });
+  test('processEntry: transient x3 keeps text (never lost)', async () => {
+    window.__testRouter = async () => { throw new SubmitError('network', 'down'); };
+    window.__testSleep = () => Promise.resolve();
+    await processEntry('important note');
+    assertEq(pendingEntry, 'important note');
+    assertEq(document.getElementById('fail-text').textContent, 'important note');
+    hideFailCard();
+    delete window.__testRouter; delete window.__testSleep;
   });
   runTests();
 }
