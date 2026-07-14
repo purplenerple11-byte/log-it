@@ -375,6 +375,45 @@
     }
 
     .hidden { display: none !important; }
+
+    /* ── TODAY VIEW ── */
+    #today-section { width: 100%; max-width: 340px; }
+    #today-row {
+      display: flex; flex-direction: row; flex-wrap: wrap;
+      justify-content: center; align-content: flex-start;
+      gap: 7px; cursor: pointer; user-select: none;
+    }
+    .today-box {
+      background: var(--action);
+      border-radius: 4px;
+      width: 15px; height: 15px; flex: 0 0 15px;
+      display: flex; align-items: center; justify-content: flex-start;
+      overflow: hidden;
+      transition: width .3s cubic-bezier(.4,0,.2,1), height .3s cubic-bezier(.4,0,.2,1),
+                  flex-basis .3s cubic-bezier(.4,0,.2,1), border-radius .28s ease,
+                  padding .28s ease, box-shadow .28s ease;
+    }
+    #today-row.expanded .today-box {
+      width: 100%; flex-basis: 100%; height: 58px;
+      border-radius: 14px; padding: 0 14px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    }
+    #today-row.expanded .today-box:nth-child(1) { transition-delay: 0ms; }
+    #today-row.expanded .today-box:nth-child(2) { transition-delay: 70ms; }
+    #today-row.expanded .today-box:nth-child(3) { transition-delay: 140ms; }
+    #today-row.expanded .today-box:nth-child(n+4) { transition-delay: 200ms; }
+    .today-emoji {
+      font-size: 22px; flex-shrink: 0; width: 0; opacity: 0; overflow: hidden;
+      transition: opacity .16s ease, width .2s ease, margin .2s ease;
+    }
+    #today-row.expanded .today-emoji { opacity: 1; width: auto; margin-right: 10px; transition-delay: 150ms; }
+    .today-details { opacity: 0; width: 0; flex: 0; overflow: hidden; white-space: nowrap; transition: opacity .16s ease; }
+    #today-row.expanded .today-details { opacity: 1; width: auto; flex: 1; white-space: normal; transition: opacity .2s ease; transition-delay: 150ms; }
+    .today-label-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    .today-label { color: #fff; font-weight: 600; font-size: 14px; }
+    .today-time { color: rgba(255,255,255,0.7); font-size: 11.5px; flex-shrink: 0; white-space: nowrap; }
+    .today-summary { color: rgba(255,255,255,0.9); font-size: 12.5px; margin-top: 2px; }
+    #today-hint { text-align: center; color: var(--dim); font-size: 12px; margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -392,6 +431,12 @@
         <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
       </svg>
     </button>
+  </div>
+
+  <div id="today-section" style="display:none">
+    <div id="today-row" role="button" tabindex="0" aria-expanded="false"
+         aria-label="Today's logs" onclick="toggleTodayExpanded()"></div>
+    <div id="today-hint">tap to see today</div>
   </div>
 
   <div id="hint">speak naturally — it figures out the rest</div>
@@ -581,6 +626,49 @@ function recordTodayLog(category, sub_route, message, text, deps = {}) {
   try { set(TODAY_KEY, JSON.stringify(arr)); } catch {}
   if (typeof renderTodayView === 'function') renderTodayView(deps);
   return arr;
+}
+
+// ================================================================
+// TODAY VIEW — RENDER LAYER
+// ================================================================
+function renderLogBox(entry) {
+  const key = catKey(entry.category, entry.sub_route);
+  const cfg = CAT_UI[key] || { icon: '•', label: entry.category || 'Log' };
+  const time = formatLogTime(entry.ts);
+  return '<div class="today-box">' +
+      '<span class="today-emoji">' + cfg.icon + '</span>' +
+      '<div class="today-details">' +
+        '<div class="today-label-row">' +
+          '<span class="today-label">' + escapeHtml(cfg.label) + '</span>' +
+          '<span class="today-time">' + time + '</span>' +
+        '</div>' +
+        '<div class="today-summary">' + escapeHtml(entry.message || '') + '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+function renderTodayView(deps = {}) {
+  const section = document.getElementById('today-section');
+  const row = document.getElementById('today-row');
+  if (!section || !row) return;
+  const logs = readTodayLogs(deps);
+  if (logs.length === 0) {
+    section.style.display = 'none';
+    row.classList.remove('expanded');
+    row.innerHTML = '';
+    return;
+  }
+  section.style.display = '';
+  row.innerHTML = logs.map(renderLogBox).join('');
+}
+
+function toggleTodayExpanded() {
+  const row = document.getElementById('today-row');
+  if (!row) return;
+  const expanded = row.classList.toggle('expanded');
+  row.setAttribute('aria-expanded', String(expanded));
+  const hint = document.getElementById('today-hint');
+  if (hint) hint.textContent = expanded ? 'tap to collapse' : 'tap to see today';
 }
 
 // ================================================================
@@ -968,6 +1056,10 @@ async function copyPending() {
 
 initSpeech();
 loadConfig();
+renderTodayView();
+document.getElementById('today-row').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTodayExpanded(); }
+});
 
 if (!LS.get('router_url')) setTimeout(openConfig, 600);
 
@@ -1246,6 +1338,35 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   test('readTodayLogs: malformed JSON returns empty', () => {
     const s = fakeStore('not json{');
     assertEq(readTodayLogs({ get: s.get, now: Date.now() }).length, 0);
+  });
+  test('renderTodayView: renders one box per entry and shows section', () => {
+    const now = new Date(2026,6,14,9,5).getTime();
+    const s = fakeStore(JSON.stringify([
+      { ts: now, day: '2026-07-14', category: 'grocery', sub_route: '', message: 'Milk logged.', text: 'm' },
+      { ts: now - 1000, day: '2026-07-14', category: 'meal', sub_route: '', message: 'Lunch.', text: 'l' }
+    ]));
+    renderTodayView({ get: s.get, now });
+    assertEq(document.getElementById('today-row').children.length, 2);
+    assert(document.getElementById('today-section').style.display !== 'none', 'section visible');
+  });
+  test('renderTodayView: empty hides the section', () => {
+    const s = fakeStore('[]');
+    renderTodayView({ get: s.get, now: Date.now() });
+    assertEq(document.getElementById('today-section').style.display, 'none');
+  });
+  test('toggleTodayExpanded: toggles expanded class', () => {
+    const row = document.getElementById('today-row');
+    row.classList.remove('expanded');
+    toggleTodayExpanded();
+    assert(row.classList.contains('expanded'), 'should expand');
+    toggleTodayExpanded();
+    assert(!row.classList.contains('expanded'), 'should collapse');
+  });
+  test('renderLogBox: contains label, time, escaped message', () => {
+    const html = renderLogBox({ ts: new Date(2026,6,14,9,5).getTime(), category: 'grocery', sub_route: '', message: 'x <b>' });
+    assert(html.indexOf('Grocery') !== -1, 'has label');
+    assert(html.indexOf('9:05 AM') !== -1, 'has time');
+    assert(html.indexOf('&lt;b&gt;') !== -1, 'escaped message');
   });
   runTests();
 }
