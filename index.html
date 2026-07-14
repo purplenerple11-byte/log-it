@@ -749,6 +749,74 @@ if (!LS.get('router_url')) setTimeout(openConfig, 600);
 window.addEventListener('contextmenu', (e) => {
   if (e.target.closest('#mic-btn')) e.preventDefault();
 });
+
+// ================================================================
+// SUBMIT ERROR MODEL + CLASSIFIER
+// ================================================================
+class SubmitError extends Error {
+  constructor(kind, message, status) {
+    super(message);
+    this.name = 'SubmitError';
+    this.kind = kind;        // 'timeout' | 'network' | 'http' | 'server'
+    this.status = status;    // HTTP status for kind==='http', else undefined
+  }
+}
+
+function isTransient(err) {
+  if (!(err instanceof SubmitError)) return false;
+  if (err.kind === 'timeout' || err.kind === 'network') return true;
+  if (err.kind === 'http') return err.status >= 500 || err.status === 429;
+  return false; // 'server' (logic error) and http 4xx are permanent
+}
+
+// ================================================================
+// DEV TEST HARNESS  (active only with ?test=1)
+// ================================================================
+const TESTS = [];
+function test(name, fn) { TESTS.push({ name, fn }); }
+function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed'); }
+function assertEq(actual, expected, msg) {
+  if (actual !== expected) throw new Error((msg ? msg + ': ' : '') + 'expected ' + expected + ' got ' + actual);
+}
+async function runTests() {
+  document.body.innerHTML = '';
+  const out = document.createElement('pre');
+  out.style.cssText = 'padding:16px;font:13px Menlo,monospace;color:#f4f4f5;white-space:pre-wrap';
+  document.body.appendChild(out);
+  let pass = 0, fail = 0;
+  for (const t of TESTS) {
+    try { await t.fn(); pass++; out.innerHTML += '<span style="color:#22c55e">PASS</span> ' + t.name + '\n'; }
+    catch (e) { fail++; out.innerHTML += '<span style="color:#fca5a5">FAIL</span> ' + t.name + ' — ' + e.message + '\n'; }
+  }
+  out.innerHTML += '\n' + (fail ? '<span style="color:#fca5a5">' : '<span style="color:#22c55e">')
+    + pass + ' passed, ' + fail + ' failed</span>\n';
+}
+
+// ---- TEST REGISTRATION + RUN (dev only) ----
+if (new URLSearchParams(location.search).get('test') === '1') {
+  test('isTransient: network is transient', () => {
+    assertEq(isTransient(new SubmitError('network', 'x')), true);
+  });
+  test('isTransient: timeout is transient', () => {
+    assertEq(isTransient(new SubmitError('timeout', 'x')), true);
+  });
+  test('isTransient: http 500 is transient', () => {
+    assertEq(isTransient(new SubmitError('http', 'x', 500)), true);
+  });
+  test('isTransient: http 429 is transient', () => {
+    assertEq(isTransient(new SubmitError('http', 'x', 429)), true);
+  });
+  test('isTransient: http 400 is permanent', () => {
+    assertEq(isTransient(new SubmitError('http', 'x', 400)), false);
+  });
+  test('isTransient: server error is permanent', () => {
+    assertEq(isTransient(new SubmitError('server', 'x')), false);
+  });
+  test('isTransient: plain Error is not transient', () => {
+    assertEq(isTransient(new Error('x')), false);
+  });
+  runTests();
+}
 </script>
 </body>
 </html>
