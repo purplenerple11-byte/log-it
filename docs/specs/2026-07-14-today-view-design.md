@@ -83,35 +83,47 @@ nothing existing modified.
 - Colors/sizes/animation match the approved mockup (orange squares → orange bullet
   rows, ~280–300ms morph, staggered).
 
-## Layout constraint (important)
+## Layout constraint (important) — chosen: push-down (Option B)
 
 The current `#app` is a vertically-centered flex column (`justify-content:center`).
 The user requires the **status heading and mic to stay visually fixed** during
-expand/collapse (the mic must not move), and the do-not-touch boundary forbids
-restyling `#app` or the mic.
+expand/collapse (the mic must not move) **and** the mockup's push-down behavior
+(the toggle/input slide down to make room). Under center-justification these
+conflict: growing content in flow re-centers the column and shifts the mic up.
 
-**Resolution:** the expanded list is rendered in a container that grows
-**downward without changing document flow height** — i.e. the expanded rows are
-positioned so they do not feed back into the centered layout (e.g.
-`position:absolute` anchored below the collapsed squares, expanding down over the
-space occupied by the hint/toggle). Consequences:
-- Header (status + mic) stays perfectly fixed — **acceptance criterion**.
-- The mode toggle / hint below are briefly **overlaid** by the expanded list
-  rather than pushed down. This is a deliberate refinement of the mockup (which
-  pushed content down) to satisfy "touch nothing else." Flagged for user sign-off
-  at spec review.
-- Collapsed squares add a small (~15px) footprint between mic and hint; negligible,
-  and zero when empty (`display:none`).
+**Resolution (Option B, user-approved):** change `#app` from vertically-centered
+to **top-anchored** — `justify-content: center` → `flex-start`, with top padding
+tuned so the resting layout matches the approved mockup (content anchored from the
+top rather than floating in the middle). Then:
+- The status + mic sit at a fixed top position and **do not move** on expand —
+  **acceptance criterion**.
+- Expanding the list grows the column downward in normal flow, pushing `#hint`,
+  `#mode-toggle`, `#transcript`, `#text-wrap` **down** — the mockup behavior.
+- Collapsing returns them to rest.
+
+This is the **single intentional change to an existing style** (the `#app`
+container's vertical alignment + its padding). It changes the app's resting look
+from centered to top-anchored — which matches the mockup the user approved as
+"clean." The mic, rings, status, toggle, input, and all other components keep
+their own markup and styles unchanged; they are merely anchored differently by the
+container. Collapsed squares add ~15px between mic and hint; zero when empty
+(`display:none`).
 
 ## Do-not-touch boundary (explicit)
 
-This feature modifies **only** `index.html` and adds only new, namespaced code.
-It must **not** alter, restyle, or reposition any of:
-`#status`, `#mic-wrap`, `#mic-btn`, `.pulse` (mic + rings), `#hint`,
-`#mode-toggle` / `.mode-btn`, `#transcript`, `#text-wrap` / `#text-input`,
-`#confirm-card`, `#fail-card`, `#gear-btn`, existing CSS variables, or any
-existing JS function's behavior — apart from the single additive
-`recordTodayLog(...)` call in the `processEntry` success branch. No server changes.
+This feature modifies **only** `index.html` and adds only new, namespaced code,
+with exactly **two** authorized touches to existing code:
+1. The single additive `recordTodayLog(...)` call in the `processEntry` success
+   branch (index.html:735).
+2. The `#app` container's vertical alignment + padding change (center →
+   top-anchored), per the Layout constraint section above.
+
+It must **not** alter, restyle, or reposition any of: `#status`, `#mic-wrap`,
+`#mic-btn`, `.pulse` (mic + rings), `#hint`, `#mode-toggle` / `.mode-btn`,
+`#transcript`, `#text-wrap` / `#text-input`, `#confirm-card`, `#fail-card`,
+`#gear-btn`, existing CSS variables, or any existing JS function's behavior. No
+server changes. (The mic's own appearance is unchanged; it simply sits at a fixed
+top position instead of a centered one.)
 
 ## Error handling / edge cases
 
@@ -149,4 +161,6 @@ appears; tap to expand/collapse; confirm the mic and header do not move.
 - Multi-day history, search, or totals.
 - Server read-back / cross-device sync.
 - Reflecting manual edits made directly in the Sheet.
-- Any change to the mic, recording, submission, or styling of existing elements.
+- Any change to the mic, recording, or submission logic, or to the styling of
+  existing elements — except the one authorized `#app` alignment/padding change
+  (see Layout constraint).
