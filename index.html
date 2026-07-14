@@ -670,9 +670,11 @@ async function processEntry(text) {
 }
 
 // ================================================================
-// SINGLE FETCH TO APPS SCRIPT
+// SINGLE ATTEMPT TO APPS SCRIPT (timeout-bounded, typed errors)
 // ================================================================
-async function callRouter(text) {
+async function callRouter(text, deps = {}) {
+  const fetchImpl = deps.fetchImpl || window.fetch.bind(window);
+  const timeoutMs = deps.timeoutMs ?? SUBMIT_TIMEOUT_MS;
   const url = LS.get('router_url');
 
   const payload = {
@@ -686,18 +688,32 @@ async function callRouter(text) {
     }
   };
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(payload),
-    redirect: 'follow'
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!res.ok) throw new Error('Router error ' + res.status);
+  let res;
+  try {
+    res = await fetchImpl(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+      redirect: 'follow',
+      signal: controller.signal
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    if (e && e.name === 'AbortError') throw new SubmitError('timeout', 'Request timed out');
+    throw new SubmitError('network', 'Network error');
+  }
+  clearTimeout(timer);
 
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error || 'Something went wrong');
+  if (!res.ok) throw new SubmitError('http', 'Router error ' + res.status, res.status);
 
+  let data;
+  try { data = await res.json(); }
+  catch { throw new SubmitError('server', 'Bad response from router'); }
+
+  if (!data.success) throw new SubmitError('server', data.error || 'Something went wrong');
   return data;
 }
 
@@ -835,6 +851,35 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   });
   test('nextBackoffMs: beyond schedule clamps to last (3000)', () => {
     assertEq(nextBackoffMs(5), 3000);
+  });
+  test('callRouter: success returns parsed data', async () => {
+    const fake = async () => ({ ok: true, json: async () => ({ success: true, message: 'ok' }) });
+    const data = await callRouter('hi', { fetchImpl: fake });
+    assertEq(data.message, 'ok');
+  });
+  test('callRouter: network reject -> SubmitError network', async () => {
+    const fake = async () => { throw new TypeError('Failed to fetch'); };
+    try { await callRouter('hi', { fetchImpl: fake }); assert(false, 'should throw'); }
+    catch (e) { assertEq(e.kind, 'network'); }
+  });
+  test('callRouter: http 500 -> SubmitError http 500', async () => {
+    const fake = async () => ({ ok: false, status: 500, json: async () => ({}) });
+    try { await callRouter('hi', { fetchImpl: fake }); assert(false, 'should throw'); }
+    catch (e) { assertEq(e.kind, 'http'); assertEq(e.status, 500); }
+  });
+  test('callRouter: {success:false} -> SubmitError server', async () => {
+    const fake = async () => ({ ok: true, json: async () => ({ success: false, error: 'nope' }) });
+    try { await callRouter('hi', { fetchImpl: fake }); assert(false, 'should throw'); }
+    catch (e) { assertEq(e.kind, 'server'); assertEq(e.message, 'nope'); }
+  });
+  test('callRouter: timeout -> SubmitError timeout', async () => {
+    const fake = (url, opts) => new Promise((_, reject) => {
+      opts.signal.addEventListener('abort', () => {
+        const err = new Error('aborted'); err.name = 'AbortError'; reject(err);
+      });
+    });
+    try { await callRouter('hi', { fetchImpl: fake, timeoutMs: 50 }); assert(false, 'should throw'); }
+    catch (e) { assertEq(e.kind, 'timeout'); }
   });
   runTests();
 }
