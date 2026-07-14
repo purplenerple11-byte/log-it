@@ -556,6 +556,34 @@ function escapeHtml(s) {
 }
 
 // ================================================================
+// TODAY VIEW — DATA LAYER (local mirror)
+// ================================================================
+function readTodayLogs(deps = {}) {
+  const get = deps.get || LS.get;
+  const now = deps.now || Date.now();
+  let arr = [];
+  try { const raw = get(TODAY_KEY); arr = raw ? JSON.parse(raw) : []; } catch { arr = []; }
+  if (!Array.isArray(arr)) arr = [];
+  const today = pruneToToday(arr, now).filter(e => e && typeof e.ts === 'number');
+  today.sort((a, b) => b.ts - a.ts);
+  return today;
+}
+
+function recordTodayLog(category, sub_route, message, text, deps = {}) {
+  const now = deps.now || Date.now();
+  const get = deps.get || LS.get;
+  const set = deps.set || LS.set;
+  let arr = [];
+  try { const raw = get(TODAY_KEY); arr = raw ? JSON.parse(raw) : []; } catch { arr = []; }
+  if (!Array.isArray(arr)) arr = [];
+  arr.push({ ts: now, day: localDayStamp(now), category, sub_route, message, text });
+  arr = pruneToToday(arr, now);
+  try { set(TODAY_KEY, JSON.stringify(arr)); } catch {}
+  if (typeof renderTodayView === 'function') renderTodayView(deps);
+  return arr;
+}
+
+// ================================================================
 // STATE
 // ================================================================
 let isRecording  = false;
@@ -1185,6 +1213,39 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   });
   test('escapeHtml: escapes markup chars', () => {
     assertEq(escapeHtml('<b>&"x'), '&lt;b&gt;&amp;&quot;x');
+  });
+  function fakeStore(seed) {
+    const mem = { [TODAY_KEY]: seed === undefined ? '' : seed };
+    return { get: (k) => mem[k] || '', set: (k, v) => { mem[k] = v; }, mem };
+  }
+  test('recordTodayLog: appends an entry', () => {
+    const now = new Date(2026,6,14,9,5).getTime();
+    const s = fakeStore();
+    recordTodayLog('grocery', '', 'Milk logged.', 'buy milk', { get: s.get, set: s.set, now });
+    const logs = readTodayLogs({ get: s.get, now });
+    assertEq(logs.length, 1);
+    assertEq(logs[0].category, 'grocery');
+    assertEq(logs[0].message, 'Milk logged.');
+  });
+  test('recordTodayLog: prunes previous-day entries', () => {
+    const now = new Date(2026,6,14,9,5).getTime();
+    const s = fakeStore(JSON.stringify([{ ts: 1, day: '2000-01-01', category: 'x' }]));
+    recordTodayLog('meal', '', 'Lunch.', 'lunch', { get: s.get, set: s.set, now });
+    const logs = readTodayLogs({ get: s.get, now });
+    assertEq(logs.length, 1);
+    assertEq(logs[0].category, 'meal');
+  });
+  test('readTodayLogs: newest first', () => {
+    const now = new Date(2026,6,14,9,5).getTime();
+    const s = fakeStore();
+    recordTodayLog('a', '', 'first', 't1', { get: s.get, set: s.set, now });
+    recordTodayLog('b', '', 'second', 't2', { get: s.get, set: s.set, now: now + 1000 });
+    const logs = readTodayLogs({ get: s.get, now: now + 2000 });
+    assertEq(logs[0].message, 'second');
+  });
+  test('readTodayLogs: malformed JSON returns empty', () => {
+    const s = fakeStore('not json{');
+    assertEq(readTodayLogs({ get: s.get, now: Date.now() }).length, 0);
   });
   runTests();
 }
