@@ -541,6 +541,26 @@ const SUBMIT_MAX_ATTEMPTS = 3;
 const SUBMIT_BACKOFFS_MS = [1000, 3000]; // before retry #1, retry #2
 
 // ================================================================
+// DEV MOCK ROUTER  (active only with ?mock=<scenario>)
+// ================================================================
+let __mockScenario = null;
+function mockFetchFor(scenario) {
+  return (url, opts) => {
+    switch (scenario) {
+      case 'success': return Promise.resolve({ ok: true, json: async () => ({ success: true, category: 'grocery', sub_route: '', message: 'Mock: item logged ✓' }) });
+      case 'server':  return Promise.resolve({ ok: true, json: async () => ({ success: false, error: 'Mock: router rejected this' }) });
+      case 'http5xx': return Promise.resolve({ ok: false, status: 503, json: async () => ({}) });
+      case 'http4xx': return Promise.resolve({ ok: false, status: 400, json: async () => ({}) });
+      case 'network': return Promise.reject(new TypeError('Mock: failed to fetch'));
+      case 'timeout': return new Promise((_, reject) => {
+        opts.signal.addEventListener('abort', () => { const e = new Error('aborted'); e.name = 'AbortError'; reject(e); });
+      });
+      default: return Promise.reject(new Error('unknown mock scenario: ' + scenario));
+    }
+  };
+}
+
+// ================================================================
 // CONFIG PANEL
 // ================================================================
 function loadConfig() {
@@ -735,8 +755,9 @@ function clearInputs() {
 // SINGLE ATTEMPT TO APPS SCRIPT (timeout-bounded, typed errors)
 // ================================================================
 async function callRouter(text, deps = {}) {
-  const fetchImpl = deps.fetchImpl || window.fetch.bind(window);
-  const timeoutMs = deps.timeoutMs ?? SUBMIT_TIMEOUT_MS;
+  const fetchImpl = deps.fetchImpl
+    || (__mockScenario ? mockFetchFor(__mockScenario) : window.fetch.bind(window));
+  const timeoutMs = deps.timeoutMs ?? window.__DEV_TIMEOUT_OVERRIDE ?? SUBMIT_TIMEOUT_MS;
   const url = LS.get('router_url');
 
   const payload = {
@@ -879,6 +900,12 @@ async function copyPending() {
 // ================================================================
 // INIT
 // ================================================================
+(function initDevFlags() {
+  const p = new URLSearchParams(location.search);
+  if (p.get('mock')) __mockScenario = p.get('mock');
+  if (p.get('to'))   window.__DEV_TIMEOUT_OVERRIDE = parseInt(p.get('to'), 10);
+})();
+
 initSpeech();
 loadConfig();
 
