@@ -524,6 +524,38 @@ const LS = {
 };
 
 // ================================================================
+// TODAY VIEW — PURE HELPERS
+// ================================================================
+const TODAY_KEY = 'today_logs';
+
+function localDayStamp(ts) {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+
+function pruneToToday(entries, now) {
+  const today = localDayStamp(now);
+  return entries.filter(e => e && e.day === today);
+}
+
+function formatLogTime(ts) {
+  const d = new Date(ts);
+  let h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12; if (h === 0) h = 12;
+  return h + ':' + m + ' ' + ampm;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ================================================================
 // STATE
 // ================================================================
 let isRecording  = false;
@@ -1125,6 +1157,34 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(document.getElementById('fail-text').textContent, 'important note');
     hideFailCard();
     delete window.__testRouter; delete window.__testSleep;
+  });
+  test('localDayStamp: formats local Y-M-D', () => {
+    const ts = new Date(2026, 6, 14, 9, 5).getTime();
+    assertEq(localDayStamp(ts), '2026-07-14');
+  });
+  test('pruneToToday: keeps only today', () => {
+    const now = new Date(2026, 6, 14, 9, 5).getTime();
+    const kept = pruneToToday([
+      { ts: now, day: '2026-07-14' },
+      { ts: 1, day: '2000-01-01' }
+    ], now);
+    assertEq(kept.length, 1);
+    assertEq(kept[0].day, '2026-07-14');
+  });
+  test('formatLogTime: morning', () => {
+    assertEq(formatLogTime(new Date(2026,6,14,9,5).getTime()), '9:05 AM');
+  });
+  test('formatLogTime: afternoon', () => {
+    assertEq(formatLogTime(new Date(2026,6,14,14,30).getTime()), '2:30 PM');
+  });
+  test('formatLogTime: midnight', () => {
+    assertEq(formatLogTime(new Date(2026,6,14,0,0).getTime()), '12:00 AM');
+  });
+  test('formatLogTime: noon', () => {
+    assertEq(formatLogTime(new Date(2026,6,14,12,0).getTime()), '12:00 PM');
+  });
+  test('escapeHtml: escapes markup chars', () => {
+    assertEq(escapeHtml('<b>&"x'), '&lt;b&gt;&amp;&quot;x');
   });
   runTests();
 }
