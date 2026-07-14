@@ -485,6 +485,13 @@ let mode         = 'voice';
 let confirmTimer = null;
 
 // ================================================================
+// SUBMIT CONFIG
+// ================================================================
+const SUBMIT_TIMEOUT_MS  = 15000;
+const SUBMIT_MAX_ATTEMPTS = 3;
+const SUBMIT_BACKOFFS_MS = [1000, 3000]; // before retry #1, retry #2
+
+// ================================================================
 // CONFIG PANEL
 // ================================================================
 function loadConfig() {
@@ -769,6 +776,11 @@ function isTransient(err) {
   return false; // 'server' (logic error) and http 4xx are permanent
 }
 
+function nextBackoffMs(completedAttempts) {
+  const i = completedAttempts - 1;
+  return SUBMIT_BACKOFFS_MS[i] ?? SUBMIT_BACKOFFS_MS[SUBMIT_BACKOFFS_MS.length - 1];
+}
+
 // ================================================================
 // DEV TEST HARNESS  (active only with ?test=1)
 // ================================================================
@@ -814,6 +826,15 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   });
   test('isTransient: plain Error is not transient', () => {
     assertEq(isTransient(new Error('x')), false);
+  });
+  test('nextBackoffMs: after attempt 1 waits 1000', () => {
+    assertEq(nextBackoffMs(1), 1000);
+  });
+  test('nextBackoffMs: after attempt 2 waits 3000', () => {
+    assertEq(nextBackoffMs(2), 3000);
+  });
+  test('nextBackoffMs: beyond schedule clamps to last (3000)', () => {
+    assertEq(nextBackoffMs(5), 3000);
   });
   runTests();
 }
