@@ -64,9 +64,9 @@ const DAILY_LINES = [
   { text: "Start before you're ready.", when: 'am' },
   { text: 'Set the day before it sets you.', when: 'am' },
   { text: 'First entry sets the tone.', when: 'am' },
-  { text: 'The best time to plant a tree was twenty years ago. The second best time is now.', author: 'proverb', when: 'am' },
+  { text: 'The best time to plant a tree was twenty years ago. The second best time is now.', author: 'Proverb', when: 'am' },
   { text: 'Well begun is half done.', author: 'Aristotle', when: 'am' },
-  { text: 'When you arise in the morning, think of what a precious privilege it is to be alive.', author: 'Marcus Aurelius', when: 'am' },
+  { text: 'At dawn, when you have trouble getting out of bed, tell yourself: I have to go to work — as a human being.', author: 'Marcus Aurelius', when: 'am' },
   { text: 'Make each day your masterpiece.', author: 'John Wooden', when: 'am' },
   { text: 'First say to yourself what you would be; and then do what you have to do.', author: 'Epictetus', when: 'am' },
 
@@ -100,7 +100,6 @@ const DAILY_LINES = [
   { text: 'You could leave life right now. Let that determine what you do and say and think.', author: 'Marcus Aurelius' },
   { text: 'It is not that we have a short time to live, but that we waste a lot of it.', author: 'Seneca' },
   { text: 'We suffer more often in imagination than in reality.', author: 'Seneca' },
-  { text: 'What gets measured gets managed.', author: 'Peter Drucker' },
   { text: 'Little strokes fell great oaks.', author: 'Benjamin Franklin' },
   { text: 'Lost time is never found again.', author: 'Benjamin Franklin' },
   { text: 'Energy and persistence conquer all things.', author: 'Benjamin Franklin' },
@@ -121,12 +120,21 @@ function windowFor(date) {
   return date.getHours() < 17 ? 'am' : 'pm';
 }
 
-// djb2-xor, unsigned. Hash (not dayOfYear % n) so the same calendar date
-// lands differently each year and consecutive days don't walk the list.
+// djb2-xor, unsigned, plus a murmur3 fmix32 avalanche. Hash (not
+// dayOfYear % n) so the same calendar date lands differently each year and
+// consecutive days don't walk the list. The avalanche is load-bearing:
+// djb2-xor alone is near-linear, so consecutive-day keys produced hash
+// deltas that were exact multiples of the pool size, repeating the previous
+// day's line ~22x/year.
 function dailyHash(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
-  return h;
+  h ^= h >>> 16;
+  h = Math.imul(h, 2246822507) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 3266489909) >>> 0;
+  h ^= h >>> 16;
+  return h >>> 0;
 }
 
 function lineFor(date, lines) {

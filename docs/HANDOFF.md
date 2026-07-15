@@ -26,8 +26,9 @@ PWA (index.html, GitHub Pages)
   ← enriched confirmation shown in confirm card
 ```
 
-- **Client** (`index.html`, ~1150 lines, no build/npm; tests live in
-  `tests.js`, loaded only under `?test=1`):
+- **Client** (`index.html`, ~1150 lines, no build/npm, plus `daily.js` for the
+  daily-line content + pure selectors; tests live in `tests.js`, loaded only
+  under `?test=1`):
   - Submission: `processEntry` → `submitWithRetry` (3 attempts, backoff 1s/3s)
     → `callRouter` (15s `AbortController` timeout, typed `SubmitError`:
     timeout/network/http/server; `isTransient` decides retry). Input held in
@@ -61,7 +62,7 @@ PWA (index.html, GitHub Pages)
 ## Testing (browser-only, no CLI runner)
 
 - In-page harness: serve repo (`python3 -m http.server 8777`) and open
-  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 54 passed, 0
+  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 67 passed, 0
   failed.** Any change must keep it green; new features add tests there.
   Tests live in `tests.js`; `index.html` injects it only when `?test=1` is
   set, so production never fetches it. The harness reads production globals

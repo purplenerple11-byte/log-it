@@ -393,6 +393,15 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     for (let d = 1; d <= 30; d++) seen.add(lineFor(new Date(2026, 6, d, 9, 0), pool).text);
     assert(seen.size >= 2, '30 days drew ' + seen.size + ' distinct lines');
   });
+  test('lineFor: consecutive days rarely repeat the same line (real pool)', () => {
+    let repeats = 0, prev = null;
+    for (let i = 0; i < 365; i++) {
+      const cur = lineFor(new Date(2026, 0, 1 + i, 9, 0), DAILY_LINES).text;
+      if (prev !== null && cur === prev) repeats++;
+      prev = cur;
+    }
+    assert(repeats <= 12, 'morning line repeated the previous day ' + repeats + 'x in 2026 (chance is ~5; the pre-avalanche hash gave 24)');
+  });
   // ---- daily line: render ----
   test('renderDailyLine: text only, no attribution element', () => {
     renderDailyLine({ now: new Date(2026, 6, 15, 9, 0), lines: [{ text: 'Begin again.' }] });
