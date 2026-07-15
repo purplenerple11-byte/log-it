@@ -43,7 +43,7 @@ PWA (index.html, GitHub Pages)
     tap collapses. Empty → hidden. No hint text (removed deliberately).
   - Mode toggle morph: `text-mode` class on `#app`; `#mic-btn` morphs into the
     text box (320ms cubic-bezier(.4,0,.2,1)); real `#text-input` fades in over
-    the shell; headings "Tap to log" / "Type to log".
+    the shell; headings "Hold to log" / "Type to log".
   - Layout is top-anchored (`#app` flex-start, `padding:8vh 24px 40px`) so the
     mic never moves when the Today list expands.
 - **PWA install** (`manifest.json`, `icons/`): standalone, portrait, dark
@@ -109,6 +109,12 @@ PWA (index.html, GitHub Pages)
 8. Test harness split into `tests.js` (index.html 56.8KB → 40.3KB, -29%).
 9. **v4.2 validated live by the user** ("worked 2-4 at susans" → Susans,
    2:00pm-4:00pm, $40). The NaN fix is confirmed in production.
+10. Daily line: the static hint is now a rotating mantra/prompt/quote
+    (`daily.js`). Two local-time windows split at 5pm ('am'/'pm' tags;
+    untagged lines float into both); pick = hash of date+window, so it
+    holds still within a window and rolls at 5pm and midnight. Pure
+    `lineFor(date, lines)`; no storage, no timer. `#hint` lost
+    `white-space: nowrap` so quotes wrap.
 
 ## Key facts (don't re-litigate)
 
@@ -127,20 +133,16 @@ PWA (index.html, GitHub Pages)
 
 ## Next steps (prioritized)
 
-1. Dedupe the 3.8s confirm timing (3800/`3.8s`/3900 in three places — one
-   constant) and drop the pointless `!important` on `#card-fill`.
-2. Voice capture: `recognition.continuous=false` ends on natural pauses —
-   discuss switching for long rambles (relates to old cutoff complaint).
-3. (Optional) `?mock=` is still in `index.html` (~15 lines, wired into
+1. (Optional) `?mock=` is still in `index.html` (~15 lines, wired into
    `callRouter` at ~line 948, inert without the URL param). Left there
    during the harness split because extracting it is surgery, not a move.
-4. **Offline queue** (raised while scoping the manifest, deliberately deferred):
+2. **Offline queue** (raised while scoping the manifest, deliberately deferred):
    a service worker caching the shell + queueing failed logs to retry when back
    online. Real value if logging where reception is bad, but it interacts with
    the existing `submitWithRetry` state machine and needs its own spec. Note a
    shell-only cache is *not* worth it alone — the app would open offline and
    then fail to submit anyway.
-5. (Deferred minors, fine to ignore: JSON-parse block duplicated in
+3. (Deferred minors, fine to ignore: JSON-parse block duplicated in
    readTodayLogs/recordTodayLog; `deps.now||Date.now()` epoch-0; keydown
    null-guard.)
 

@@ -411,5 +411,24 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(document.getElementById('hint').textContent, '');
     renderDailyLine(); // restore the real line
   });
+  // ---- daily line: content ----
+  test('DAILY_LINES: every entry well-formed, no duplicate text', () => {
+    assert(Array.isArray(DAILY_LINES), 'DAILY_LINES should be an array');
+    const texts = new Set();
+    for (const l of DAILY_LINES) {
+      assert(typeof l.text === 'string' && l.text.trim().length > 0, 'bad text: ' + JSON.stringify(l));
+      assert(l.when === undefined || l.when === 'am' || l.when === 'pm', 'bad when: ' + JSON.stringify(l));
+      assert(l.author === undefined || (typeof l.author === 'string' && l.author.length > 0), 'bad author: ' + JSON.stringify(l));
+      texts.add(l.text);
+    }
+    assertEq(texts.size, DAILY_LINES.length, 'duplicate line text');
+  });
+  test('DAILY_LINES: substantial pools in both windows', () => {
+    assert(DAILY_LINES.length >= 90, 'want >= 90 lines, got ' + DAILY_LINES.length);
+    const am = DAILY_LINES.filter((l) => !l.when || l.when === 'am').length;
+    const pm = DAILY_LINES.filter((l) => !l.when || l.when === 'pm').length;
+    assert(am >= 40, 'am pool only ' + am);
+    assert(pm >= 40, 'pm pool only ' + pm);
+  });
   runTests();
 }
