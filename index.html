@@ -64,6 +64,8 @@
       align-items: center;
       justify-content: center;
       margin: 20px 0;
+      width: 100%;
+      max-width: 340px;
     }
 
     .pulse {
@@ -71,7 +73,7 @@
       border-radius: 50%;
       border: 2px solid rgba(255, 255, 255, 0.15);
       pointer-events: none;
-      transition: border-color 0.3s;
+      transition: border-color 0.3s, opacity .28s;
     }
     .pulse:nth-child(1) { width: 110px; height: 110px; opacity: 1; }
     .pulse:nth-child(2) { width: 140px; height: 140px; opacity: 0.6; }
@@ -81,11 +83,14 @@
       0%   { transform: scale(.85); opacity: .8; }
       100% { transform: scale(1.3); opacity: 0;   }
     }
-    
+
     .recording .pulse { border-color: var(--action); opacity: 0; }
     .recording .pulse:nth-child(1) { animation: ring-out 1.5s ease-out        infinite; }
     .recording .pulse:nth-child(2) { animation: ring-out 1.5s ease-out  .3s   infinite; }
     .recording .pulse:nth-child(3) { animation: ring-out 1.5s ease-out  .6s   infinite; }
+
+    /* text-mode: rings fade out (280ms, via .pulse transition above) */
+    #app.text-mode .pulse { opacity: 0; }
 
     #mic-btn {
       position: relative; z-index: 1;
@@ -97,7 +102,9 @@
       cursor: pointer;
       touch-action: manipulation;
       color: var(--text);
-      transition: background .2s, border-color .2s, color .2s, transform 0.1s;
+      transition: background .2s, border-color .2s, color .2s, transform 0.1s,
+                  width .32s cubic-bezier(.4,0,.2,1), height .32s cubic-bezier(.4,0,.2,1),
+                  border-radius .32s cubic-bezier(.4,0,.2,1), border-width .32s cubic-bezier(.4,0,.2,1);
     }
     #mic-btn:active { transform: scale(0.96); }
     #mic-btn.recording {
@@ -105,7 +112,20 @@
       border-color: var(--action);
       color: #fff;
     }
-    #mic-btn svg { pointer-events: none; }
+    #mic-btn svg { pointer-events: none; transition: opacity .18s; }
+
+    /* text-mode: mic circle morphs into the text-box shell */
+    #app.text-mode #mic-btn {
+      width: 100%;
+      height: 120px;
+      border-radius: 16px;
+      border-width: 1px;
+      border-color: var(--border);
+      background: var(--surface);
+      cursor: default;
+      pointer-events: none;
+    }
+    #app.text-mode #mic-btn svg { opacity: 0; }
 
     /* ── HINT ── */
     #hint {
@@ -115,7 +135,9 @@
       white-space: nowrap;
       margin-top: -10px;
       margin-bottom: 10px;
+      transition: opacity .2s;
     }
+    #app.text-mode #hint { opacity: 0; pointer-events: none; }
 
     /* ── TRANSCRIPT ── */
     #transcript {
@@ -157,16 +179,11 @@
       font-weight: 600;
     }
 
-    /* ── TEXT INPUT ── */
-    #text-wrap {
-      width: 100%;
-      max-width: 340px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
+    /* ── TEXT INPUT (morphs in over the mic shell) ── */
     #text-input {
-      width: 100%;
+      position: absolute;
+      inset: 0;
+      z-index: 2;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 16px;
@@ -174,18 +191,31 @@
       font-size: 16px;
       padding: 16px;
       resize: none;
-      min-height: 120px;
       font-family: inherit;
       line-height: 1.5;
       outline: none;
       -webkit-appearance: none;
       user-select: text;
-      transition: border-color .15s;
+      opacity: 0;
+      pointer-events: none;
+      transition: border-color .15s, opacity .1s ease;
     }
     #text-input:focus { border-color: var(--dim); }
     #text-input::placeholder { color: #555; }
 
+    /* expand: fade in over the shell, 250ms with 140ms delay */
+    #app.text-mode #text-input {
+      opacity: 1;
+      pointer-events: auto;
+      transition: border-color .15s, opacity .25s ease .14s;
+    }
+
     #send-btn {
+      position: absolute;
+      left: 0; right: 0;
+      top: 100%;
+      margin-top: 14px;
+      z-index: 2;
       background: var(--surface2);
       border: none;
       color: var(--text);
@@ -194,9 +224,20 @@
       font-size: 16px;
       font-weight: 600;
       cursor: pointer;
-      transition: background .15s, color 0.15s;
+      opacity: 0;
+      transform: translateY(16px);
+      pointer-events: none;
+      transition: background .15s, color 0.15s,
+                  opacity .25s ease .1s, transform .25s cubic-bezier(.4,0,.2,1) .1s;
     }
     #send-btn:active { background: var(--action); color: #fff; }
+
+    /* expand: slide up + fade in, 250ms with 100ms delay */
+    #app.text-mode #send-btn {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
 
     /* ── GEAR BUTTON ── */
     #gear-btn {
@@ -430,6 +471,10 @@
         <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
       </svg>
     </button>
+    <textarea id="text-input"
+      placeholder="Describe what you want to log…"
+      rows="4"></textarea>
+    <button id="send-btn" onclick="submitText()">Log It →</button>
   </div>
 
   <div id="hint">speak naturally — it figures out the rest</div>
@@ -451,13 +496,6 @@
   </div>
 
   <div id="transcript"></div>
-
-  <div id="text-wrap" class="hidden">
-    <textarea id="text-input"
-      placeholder="Describe what you want to log…"
-      rows="4"></textarea>
-    <button id="send-btn" onclick="submitText()">Log It →</button>
-  </div>
 </div>
 
 <button id="gear-btn" onclick="openConfig()" aria-label="Settings">
@@ -745,14 +783,13 @@ function closeConfig() {
 // MODE TOGGLE (voice / text)
 // ================================================================
 function setMode(m) {
+  if (isRecording) stopRecording();
   mode = m;
   document.getElementById('btn-voice').classList.toggle('active', m === 'voice');
   document.getElementById('btn-text').classList.toggle('active',  m === 'text');
-  document.getElementById('mic-wrap').classList.toggle('hidden',  m === 'text');
-  document.getElementById('hint').classList.toggle('hidden',      m === 'text');
-  document.getElementById('text-wrap').classList.toggle('hidden', m === 'voice');
+  document.getElementById('app').classList.toggle('text-mode',    m === 'text');
   document.getElementById('transcript').textContent = '';
-  setStatus(m === 'voice' ? 'Tap to log' : 'Type your entry');
+  setStatus(m === 'voice' ? 'Tap to log' : 'Type to log');
 }
 
 // ================================================================
@@ -798,6 +835,7 @@ function initSpeech() {
 }
 
 function toggleRecording() {
+  if (mode !== 'voice') return;
   if (isRecording) {
     stopRecording();
   } else {
@@ -829,7 +867,7 @@ function stopRecordingUI() {
   isRecording = false;
   document.getElementById('mic-btn').classList.remove('recording');
   document.getElementById('mic-wrap').classList.remove('recording');
-  setStatus(mode === 'voice' ? 'Tap to log' : 'Type your entry');
+  setStatus(mode === 'voice' ? 'Tap to log' : 'Type to log');
 }
 
 // ================================================================
@@ -883,11 +921,11 @@ async function processEntry(text) {
     pendingEntry = null;
     clearInputs();
     setTimeout(() => {
-      setStatus(mode === 'voice' ? 'Tap to log' : 'Type your entry');
+      setStatus(mode === 'voice' ? 'Tap to log' : 'Type to log');
       document.getElementById('transcript').textContent = '';
     }, 3800);
   } catch (err) {
-    setStatus(mode === 'voice' ? 'Tap to log' : 'Type your entry');
+    setStatus(mode === 'voice' ? 'Tap to log' : 'Type to log');
     showFailCard(text, err);
   }
 }
@@ -1382,6 +1420,16 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   test('router: no blocking Utilities.sleep', async () => {
     const src = await (await fetch('server/routerWebApp.gs')).text();
     assert(src.indexOf('Utilities.sleep') === -1, 'no blocking sleeps');
+  });
+  test('setMode(text): adds text-mode class + status "Type to log"', () => {
+    setMode('text');
+    assert(document.getElementById('app').classList.contains('text-mode'), 'app should have text-mode class');
+    assertEq(document.getElementById('status').textContent, 'Type to log');
+  });
+  test('setMode(voice): removes text-mode class + status "Tap to log"', () => {
+    setMode('voice');
+    assert(!document.getElementById('app').classList.contains('text-mode'), 'app should not have text-mode class');
+    assertEq(document.getElementById('status').textContent, 'Tap to log');
   });
   runTests();
 }
