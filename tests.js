@@ -351,10 +351,10 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(document.getElementById('app').classList.contains('text-mode'), 'app should have text-mode class');
     assertEq(document.getElementById('status').textContent, 'Type to log');
   });
-  test('setMode(voice): removes text-mode class + status "Tap to log"', () => {
+  test('setMode(voice): removes text-mode class + status "Hold to log"', () => {
     setMode('voice');
     assert(!document.getElementById('app').classList.contains('text-mode'), 'app should not have text-mode class');
-    assertEq(document.getElementById('status').textContent, 'Tap to log');
+    assertEq(document.getElementById('status').textContent, 'Hold to log');
   });
   runTests();
 }

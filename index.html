@@ -105,7 +105,7 @@
       background: var(--bg);
       display: flex; align-items: center; justify-content: center;
       cursor: pointer;
-      touch-action: manipulation;
+      touch-action: none;
       color: var(--text);
       transition: background .2s, border-color .2s, color .2s, transform 0.1s,
                   width .32s cubic-bezier(.4,0,.2,1), height .32s cubic-bezier(.4,0,.2,1),
@@ -297,7 +297,7 @@
       background: var(--border);
       margin-top: 20px; overflow: hidden;
     }
-    #card-fill { height: 100%; width: 0%; border-radius: 2px; background: var(--action) !important; }
+    #card-fill { height: 100%; width: 0%; border-radius: 2px; background: var(--action); }
 
     /* ── ERROR TOAST ── */
     #err-toast {
@@ -480,13 +480,15 @@
 <body>
 
 <div id="app">
-  <div id="status">Tap to log</div>
+  <div id="status">Hold to log</div>
 
   <div id="mic-wrap">
     <div class="pulse"></div>
     <div class="pulse"></div>
     <div class="pulse"></div>
-    <button id="mic-btn" aria-label="Tap to record" onclick="toggleRecording()">
+    <button id="mic-btn" aria-label="Hold to record"
+            onpointerdown="startRecording()" onpointerup="stopRecording()"
+            onpointerleave="stopRecording()" onpointercancel="stopRecording()">
       <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
         <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
@@ -744,6 +746,7 @@ let pendingEntry = null;
 const SUBMIT_TIMEOUT_MS  = 15000;
 const SUBMIT_MAX_ATTEMPTS = 3;
 const SUBMIT_BACKOFFS_MS = [1000, 3000]; // before retry #1, retry #2
+const CONFIRM_DURATION_MS = 3800;
 
 // ================================================================
 // DEV MOCK ROUTER  (active only with ?mock=<scenario>)
@@ -812,7 +815,7 @@ function setMode(m) {
   document.getElementById('app').classList.toggle('text-mode',    m === 'text');
   document.getElementById('mode-toggle').dataset.mode = m;
   document.getElementById('transcript').textContent = '';
-  setStatus(m === 'voice' ? 'Tap to log' : 'Type to log');
+  setStatus(m === 'voice' ? 'Hold to log' : 'Type to log');
 }
 
 // ================================================================
@@ -829,7 +832,7 @@ function initSpeech() {
   recognition = new SR();
   recognition.lang = 'en-US';
   recognition.interimResults = true;
-  recognition.continuous = false;
+  recognition.continuous = true;
   recognition.maxAlternatives = 1;
 
   recognition.onresult = (e) => {
@@ -857,16 +860,8 @@ function initSpeech() {
   };
 }
 
-function toggleRecording() {
-  if (mode !== 'voice') return;
-  if (isRecording) {
-    stopRecording();
-  } else {
-    startRecording();
-  }
-}
-
 function startRecording() {
+  if (mode !== 'voice') return;
   if (isRecording || !recognition) return;
   if (!validateConfig()) return;
 
@@ -890,7 +885,7 @@ function stopRecordingUI() {
   isRecording = false;
   document.getElementById('mic-btn').classList.remove('recording');
   document.getElementById('mic-wrap').classList.remove('recording');
-  setStatus(mode === 'voice' ? 'Tap to log' : 'Type to log');
+  setStatus(mode === 'voice' ? 'Hold to log' : 'Type to log');
 }
 
 // ================================================================
@@ -944,11 +939,11 @@ async function processEntry(text) {
     pendingEntry = null;
     clearInputs();
     setTimeout(() => {
-      setStatus(mode === 'voice' ? 'Tap to log' : 'Type to log');
+      setStatus(mode === 'voice' ? 'Hold to log' : 'Type to log');
       document.getElementById('transcript').textContent = '';
-    }, 3800);
+    }, CONFIRM_DURATION_MS);
   } catch (err) {
-    setStatus(mode === 'voice' ? 'Tap to log' : 'Type to log');
+    setStatus(mode === 'voice' ? 'Hold to log' : 'Type to log');
     showFailCard(text, err);
   }
 }
@@ -1053,12 +1048,12 @@ function showConfirm(category, sub_route, message) {
   document.getElementById('confirm-card').classList.add('show');
 
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    fill.style.transition = 'width 3.8s linear';
+    fill.style.transition = `width ${CONFIRM_DURATION_MS}ms linear`;
     fill.style.width = '100%';
   }));
 
   if (confirmTimer) clearTimeout(confirmTimer);
-  confirmTimer = setTimeout(dismissConfirm, 3900);
+  confirmTimer = setTimeout(dismissConfirm, CONFIRM_DURATION_MS + 100);
 }
 
 function dismissConfirm() {
