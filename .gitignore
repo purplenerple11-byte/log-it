@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Personal working files kept alongside the repo but never published.
+# This repo is public and serves GitHub Pages — keep source notes, legacy
+# Apps Script exports, and reference docs out of it.
+*.rtf
+*.pdf
+*.txt
+
+# Editor / tooling
+.vscode/
+.idea/
+*.swp
