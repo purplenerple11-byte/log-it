@@ -45,6 +45,13 @@ PWA (index.html, GitHub Pages)
     the shell; headings "Tap to log" / "Type to log".
   - Layout is top-anchored (`#app` flex-start, `padding:8vh 24px 40px`) so the
     mic never moves when the Today list expands.
+- **PWA install** (`manifest.json`, `icons/`): standalone, portrait, dark
+  splash. Icon = dark `#121316` dot on solid `#cc785c` (regenerate with
+  `python3 tools/make-icons.py`, stdlib only). One image serves "any maskable"
+  because the field is solid and the dot sits inside the 80% safe zone. iOS
+  ignores manifest icons — the `apple-touch-icon` link at 180px is what it uses.
+  **All manifest paths must stay relative**: `start_url`/`scope` have to resolve
+  to the `/log-it/` Pages subpath, not the domain root. A test guards this.
 - **Categories/sheets:** tip (Track|Susans tabs), meal (Log + Daily Summary),
   grocery (Raw Log + categorized Grocery List), idea (Ideas + Materials),
   car (Maintenance Log). Sheet IDs entered in the app's ⚙ settings
@@ -53,7 +60,7 @@ PWA (index.html, GitHub Pages)
 ## Testing (browser-only, no CLI runner)
 
 - In-page harness: serve repo (`python3 -m http.server 8777`) and open
-  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 47 passed, 0
+  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 54 passed, 0
   failed.** Any change must keep it green; new features add tests there.
 - `?mock=<success|server|http4xx|http5xx|network|timeout>` fakes the router in
   the real UI (set any non-empty router URL in localStorage first);
@@ -86,6 +93,10 @@ PWA (index.html, GitHub Pages)
    "NaN". 4 regression tests fetch and check the .gs in the suite. **User has
    deployed v4.2 to Apps Script.**
 5. Voice⇄text morph.
+6. `.gitignore` for the personal files (.rtf/.pdf/.txt/.DS_Store). Verified
+   none had ever been committed on any branch — prevention only, no history
+   rewrite. Merged to `Main`.
+7. PWA manifest + app icon (2026-07-15, branch `feat/pwa-manifest`).
 
 ## Key facts (don't re-litigate)
 
@@ -102,20 +113,21 @@ PWA (index.html, GitHub Pages)
 - End-to-end validation the user can run: log "worked 2-4 at susans" → should
   route Susans 2:00pm-4:00pm, $40 (proves NaN fix live).
 
-## Next steps (prioritized, from the audit — none started)
+## Next steps (prioritized)
 
-1. **`manifest.json` + app icon** — highest UX value; repo has zero PWA
-   manifest/icons today ("Add to Home Screen" is generic).
-2. **PENDING USER ANSWER: `.gitignore`** for the personal files sitting
-   untracked in the repo folder (.rtf/.pdf/.txt/.DS_Store) — public repo, one
-   `git add .` from leaking them. Offered; user hasn't answered yet.
-3. Strip/split the dev test harness from production `index.html` (~10KB/20%
+1. Strip/split the dev test harness from production `index.html` (~10KB/20%
    ships to every load; lines ~1097-end).
-4. Dedupe the 3.8s confirm timing (3800/`3.8s`/3900 in three places — one
+2. Dedupe the 3.8s confirm timing (3800/`3.8s`/3900 in three places — one
    constant) and drop the pointless `!important` on `#card-fill`.
-5. Voice capture: `recognition.continuous=false` ends on natural pauses —
+3. Voice capture: `recognition.continuous=false` ends on natural pauses —
    discuss switching for long rambles (relates to old cutoff complaint).
-6. (Deferred minors, fine to ignore: JSON-parse block duplicated in
+4. **Offline queue** (raised while scoping the manifest, deliberately deferred):
+   a service worker caching the shell + queueing failed logs to retry when back
+   online. Real value if logging where reception is bad, but it interacts with
+   the existing `submitWithRetry` state machine and needs its own spec. Note a
+   shell-only cache is *not* worth it alone — the app would open offline and
+   then fail to submit anyway.
+5. (Deferred minors, fine to ignore: JSON-parse block duplicated in
    readTodayLogs/recordTodayLog; `deps.now||Date.now()` epoch-0; keydown
    null-guard.)
 
