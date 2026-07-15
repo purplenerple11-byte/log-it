@@ -356,5 +356,42 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(!document.getElementById('app').classList.contains('text-mode'), 'app should not have text-mode class');
     assertEq(document.getElementById('status').textContent, 'Hold to log');
   });
+  // ---- daily line: pure selection logic ----
+  // NOTE: Date months are 0-indexed — new Date(2026, 6, 15) is July 15 2026.
+  test('windowFor: 16:59 local is am', () => {
+    assertEq(windowFor(new Date(2026, 6, 15, 16, 59)), 'am');
+  });
+  test('windowFor: 17:00 local is pm', () => {
+    assertEq(windowFor(new Date(2026, 6, 15, 17, 0)), 'pm');
+  });
+  test('lineFor: deterministic for the same date + window', () => {
+    const lines = [{ text: 'a' }, { text: 'b' }, { text: 'c' }];
+    const d = new Date(2026, 6, 15, 9, 0);
+    const first = lineFor(d, lines);
+    assert(first, 'should pick a line');
+    assertEq(lineFor(d, lines), first);
+    assertEq(lineFor(new Date(2026, 6, 15, 11, 30), lines), first, 'same window, same pick');
+  });
+  test('lineFor: am/pm tags confine lines to their window', () => {
+    const lines = [{ text: 'M', when: 'am' }, { text: 'E', when: 'pm' }];
+    assertEq(lineFor(new Date(2026, 6, 15, 9, 0), lines).text, 'M');
+    assertEq(lineFor(new Date(2026, 6, 15, 18, 0), lines).text, 'E');
+  });
+  test('lineFor: floaters are eligible in both windows', () => {
+    const only = [{ text: 'F' }];
+    assertEq(lineFor(new Date(2026, 6, 15, 9, 0), only).text, 'F');
+    assertEq(lineFor(new Date(2026, 6, 15, 18, 0), only).text, 'F');
+  });
+  test('lineFor: empty, missing, or drained pool gives null', () => {
+    assertEq(lineFor(new Date(), []), null);
+    assertEq(lineFor(new Date(), null), null);
+    assertEq(lineFor(new Date(2026, 6, 15, 9, 0), [{ text: 'x', when: 'pm' }]), null);
+  });
+  test('lineFor: picks vary across days (not stuck on one index)', () => {
+    const pool = [{ text: 'a' }, { text: 'b' }, { text: 'c' }, { text: 'd' }, { text: 'e' }];
+    const seen = new Set();
+    for (let d = 1; d <= 30; d++) seen.add(lineFor(new Date(2026, 6, d, 9, 0), pool).text);
+    assert(seen.size >= 2, '30 days drew ' + seen.size + ' distinct lines');
+  });
   runTests();
 }
