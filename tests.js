@@ -356,5 +356,107 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(!document.getElementById('app').classList.contains('text-mode'), 'app should not have text-mode class');
     assertEq(document.getElementById('status').textContent, 'Hold to log');
   });
+  // ---- daily line: pure selection logic ----
+  // NOTE: Date months are 0-indexed — new Date(2026, 6, 15) is July 15 2026.
+  test('windowFor: 16:59 local is am', () => {
+    assertEq(windowFor(new Date(2026, 6, 15, 16, 59)), 'am');
+  });
+  test('windowFor: 17:00 local is pm', () => {
+    assertEq(windowFor(new Date(2026, 6, 15, 17, 0)), 'pm');
+  });
+  test('lineFor: deterministic for the same date + window', () => {
+    const lines = [{ text: 'a' }, { text: 'b' }, { text: 'c' }];
+    const d = new Date(2026, 6, 15, 9, 0);
+    const first = lineFor(d, lines);
+    assert(first, 'should pick a line');
+    assertEq(lineFor(d, lines), first);
+    assertEq(lineFor(new Date(2026, 6, 15, 11, 30), lines), first, 'same window, same pick');
+  });
+  test('lineFor: am/pm tags confine lines to their window', () => {
+    const lines = [{ text: 'M', when: 'am' }, { text: 'E', when: 'pm' }];
+    assertEq(lineFor(new Date(2026, 6, 15, 9, 0), lines).text, 'M');
+    assertEq(lineFor(new Date(2026, 6, 15, 18, 0), lines).text, 'E');
+  });
+  test('lineFor: floaters are eligible in both windows', () => {
+    const only = [{ text: 'F' }];
+    assertEq(lineFor(new Date(2026, 6, 15, 9, 0), only).text, 'F');
+    assertEq(lineFor(new Date(2026, 6, 15, 18, 0), only).text, 'F');
+  });
+  test('lineFor: empty, missing, or drained pool gives null', () => {
+    assertEq(lineFor(new Date(), []), null);
+    assertEq(lineFor(new Date(), null), null);
+    assertEq(lineFor(new Date(2026, 6, 15, 9, 0), [{ text: 'x', when: 'pm' }]), null);
+  });
+  test('lineFor: picks vary across days (not stuck on one index)', () => {
+    const pool = [{ text: 'a' }, { text: 'b' }, { text: 'c' }, { text: 'd' }, { text: 'e' }];
+    const seen = new Set();
+    for (let d = 1; d <= 30; d++) seen.add(lineFor(new Date(2026, 6, d, 9, 0), pool).text);
+    assert(seen.size >= 2, '30 days drew ' + seen.size + ' distinct lines');
+  });
+  test('lineFor: consecutive days rarely repeat the same line (real pool)', () => {
+    let repeats = 0, prev = null;
+    for (let i = 0; i < 365; i++) {
+      const cur = lineFor(new Date(2026, 0, 1 + i, 9, 0), DAILY_LINES).text;
+      if (prev !== null && cur === prev) repeats++;
+      prev = cur;
+    }
+    assert(repeats <= 12, 'morning line repeated the previous day ' + repeats + 'x in 2026 (chance is ~5; the pre-avalanche hash gave 24)');
+  });
+  test('dailyHash: no plausible pool size makes consecutive days repeat (avalanche guard)', () => {
+    // The pre-avalanche djb2-xor was near-linear: consecutive-day keys produced
+    // hash deltas that were exact multiples of certain pool sizes, repeating the
+    // previous day's line up to 24x/year at size 77 (chance is ~5). Sweeping sizes
+    // — rather than only today's pool — keeps the guarantee independent of the
+    // content count, so editing DAILY_LINES can never silently reintroduce it.
+    let worstSize = 0, worstRepeats = 0;
+    for (let size = 60; size <= 120; size++) {
+      const pool = Array.from({ length: size }, (_, i) => ({ text: 'line-' + i }));
+      let repeats = 0, prev = null;
+      for (let i = 0; i < 365; i++) {
+        const cur = lineFor(new Date(2026, 0, 1 + i, 9, 0), pool).text;
+        if (prev !== null && cur === prev) repeats++;
+        prev = cur;
+      }
+      if (repeats > worstRepeats) { worstRepeats = repeats; worstSize = size; }
+    }
+    assert(worstRepeats <= 15, 'pool size ' + worstSize + ' repeated the previous day ' + worstRepeats + 'x in 2026 (chance ~5; the pre-avalanche hash hit 24)');
+  });
+  // ---- daily line: render ----
+  test('renderDailyLine: text only, no attribution element', () => {
+    renderDailyLine({ now: new Date(2026, 6, 15, 9, 0), lines: [{ text: 'Begin again.' }] });
+    const hint = document.getElementById('hint');
+    assertEq(hint.textContent.trim(), 'Begin again.');
+    assert(!hint.querySelector('.hint-author'), 'no author element expected');
+  });
+  test('renderDailyLine: attribution renders when author present', () => {
+    renderDailyLine({ now: new Date(2026, 6, 15, 9, 0), lines: [{ text: 'X.', author: 'Seneca' }] });
+    const a = document.getElementById('hint').querySelector('.hint-author');
+    assert(a, 'author element expected');
+    assertEq(a.textContent, '— Seneca');
+  });
+  test('renderDailyLine: no lines, nothing rendered', () => {
+    renderDailyLine({ lines: null });
+    assertEq(document.getElementById('hint').textContent, '');
+    renderDailyLine(); // restore the real line
+  });
+  // ---- daily line: content ----
+  test('DAILY_LINES: every entry well-formed, no duplicate text', () => {
+    assert(Array.isArray(DAILY_LINES), 'DAILY_LINES should be an array');
+    const texts = new Set();
+    for (const l of DAILY_LINES) {
+      assert(typeof l.text === 'string' && l.text.trim().length > 0, 'bad text: ' + JSON.stringify(l));
+      assert(l.when === undefined || l.when === 'am' || l.when === 'pm', 'bad when: ' + JSON.stringify(l));
+      assert(l.author === undefined || (typeof l.author === 'string' && l.author.length > 0), 'bad author: ' + JSON.stringify(l));
+      texts.add(l.text);
+    }
+    assertEq(texts.size, DAILY_LINES.length, 'duplicate line text');
+  });
+  test('DAILY_LINES: substantial pools in both windows', () => {
+    assert(DAILY_LINES.length >= 90, 'want >= 90 lines, got ' + DAILY_LINES.length);
+    const am = DAILY_LINES.filter((l) => !l.when || l.when === 'am').length;
+    const pm = DAILY_LINES.filter((l) => !l.when || l.when === 'pm').length;
+    assert(am >= 40, 'am pool only ' + am);
+    assert(pm >= 40, 'pm pool only ' + pm);
+  });
   runTests();
 }
