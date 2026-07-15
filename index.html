@@ -132,15 +132,21 @@
     }
     #app.text-mode #mic-btn svg { opacity: 0; }
 
-    /* ── HINT ── */
+    /* ── HINT (daily line: mantra / prompt / quote) ── */
     #hint {
       font-size: 17px;
       color: var(--dim);
       text-align: center;
-      white-space: nowrap;
+      max-width: 340px;
+      line-height: 1.45;
       margin-top: -10px;
       margin-bottom: 10px;
       transition: opacity .2s;
+    }
+    .hint-author {
+      font-size: 13px;
+      opacity: .75;
+      margin-top: 4px;
     }
     #app.text-mode #hint { opacity: 0; pointer-events: none; }
 
@@ -500,7 +506,7 @@
     <button id="send-btn" onclick="submitText()">Log It →</button>
   </div>
 
-  <div id="hint">speak naturally — it figures out the rest</div>
+  <div id="hint"></div>
 
   <div id="mode-toggle" data-mode="voice">
     <span id="mode-indicator"></span>
@@ -1101,6 +1107,29 @@ async function copyPending() {
 }
 
 // ================================================================
+// DAILY LINE (content + selection live in daily.js)
+// ================================================================
+function renderDailyLine(deps = {}) {
+  const el = document.getElementById('hint');
+  if (!el) return;
+  const lines = 'lines' in deps
+    ? deps.lines
+    : (typeof DAILY_LINES !== 'undefined' ? DAILY_LINES : null);
+  const line = (typeof lineFor === 'function') ? lineFor(deps.now || new Date(), lines) : null;
+  el.textContent = '';
+  if (!line) return;
+  const t = document.createElement('div');
+  t.textContent = line.text;
+  el.appendChild(t);
+  if (line.author) {
+    const a = document.createElement('div');
+    a.className = 'hint-author';
+    a.textContent = '— ' + line.author;
+    el.appendChild(a);
+  }
+}
+
+// ================================================================
 // INIT
 // ================================================================
 (function initDevFlags() {
@@ -1112,6 +1141,7 @@ async function copyPending() {
 initSpeech();
 loadConfig();
 renderTodayView();
+renderDailyLine();
 document.getElementById('today-row').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTodayExpanded(); }
 });

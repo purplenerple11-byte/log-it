@@ -393,5 +393,23 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     for (let d = 1; d <= 30; d++) seen.add(lineFor(new Date(2026, 6, d, 9, 0), pool).text);
     assert(seen.size >= 2, '30 days drew ' + seen.size + ' distinct lines');
   });
+  // ---- daily line: render ----
+  test('renderDailyLine: text only, no attribution element', () => {
+    renderDailyLine({ now: new Date(2026, 6, 15, 9, 0), lines: [{ text: 'Begin again.' }] });
+    const hint = document.getElementById('hint');
+    assertEq(hint.textContent.trim(), 'Begin again.');
+    assert(!hint.querySelector('.hint-author'), 'no author element expected');
+  });
+  test('renderDailyLine: attribution renders when author present', () => {
+    renderDailyLine({ now: new Date(2026, 6, 15, 9, 0), lines: [{ text: 'X.', author: 'Seneca' }] });
+    const a = document.getElementById('hint').querySelector('.hint-author');
+    assert(a, 'author element expected');
+    assertEq(a.textContent, '— Seneca');
+  });
+  test('renderDailyLine: no lines, nothing rendered', () => {
+    renderDailyLine({ lines: null });
+    assertEq(document.getElementById('hint').textContent, '');
+    renderDailyLine(); // restore the real line
+  });
   runTests();
 }
