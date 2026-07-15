@@ -1366,6 +1366,23 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(html.indexOf('9:05 AM') !== -1, 'has time');
     assert(html.indexOf('&lt;b&gt;') !== -1, 'escaped message');
   });
+  test('router: v4.2 source parses as valid JS', async () => {
+    const src = await (await fetch('server/routerWebApp.gs')).text();
+    new Function(src); // parse check only — Google globals are only referenced at runtime
+  });
+  test('router: header bumped to v4.2', async () => {
+    const src = await (await fetch('server/routerWebApp.gs')).text();
+    assert(src.indexOf('v4.2') !== -1, 'version bumped');
+  });
+  test('router: NaN "+ +" prompt bug fixed', async () => {
+    const src = await (await fetch('server/routerWebApp.gs')).text();
+    assert(!/\+\s*\+\s*'- Ambiguous/.test(src), 'NaN ++ bug fixed');
+    assert(src.indexOf("'- Ambiguous times") !== -1, 'ambiguous rule present');
+  });
+  test('router: no blocking Utilities.sleep', async () => {
+    const src = await (await fetch('server/routerWebApp.gs')).text();
+    assert(src.indexOf('Utilities.sleep') === -1, 'no blocking sleeps');
+  });
   runTests();
 }
 </script>
