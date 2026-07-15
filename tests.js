@@ -402,6 +402,25 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     }
     assert(repeats <= 12, 'morning line repeated the previous day ' + repeats + 'x in 2026 (chance is ~5; the pre-avalanche hash gave 24)');
   });
+  test('dailyHash: no plausible pool size makes consecutive days repeat (avalanche guard)', () => {
+    // The pre-avalanche djb2-xor was near-linear: consecutive-day keys produced
+    // hash deltas that were exact multiples of certain pool sizes, repeating the
+    // previous day's line up to 24x/year at size 77 (chance is ~5). Sweeping sizes
+    // — rather than only today's pool — keeps the guarantee independent of the
+    // content count, so editing DAILY_LINES can never silently reintroduce it.
+    let worstSize = 0, worstRepeats = 0;
+    for (let size = 60; size <= 120; size++) {
+      const pool = Array.from({ length: size }, (_, i) => ({ text: 'line-' + i }));
+      let repeats = 0, prev = null;
+      for (let i = 0; i < 365; i++) {
+        const cur = lineFor(new Date(2026, 0, 1 + i, 9, 0), pool).text;
+        if (prev !== null && cur === prev) repeats++;
+        prev = cur;
+      }
+      if (repeats > worstRepeats) { worstRepeats = repeats; worstSize = size; }
+    }
+    assert(worstRepeats <= 15, 'pool size ' + worstSize + ' repeated the previous day ' + worstRepeats + 'x in 2026 (chance ~5; the pre-avalanche hash hit 24)');
+  });
   // ---- daily line: render ----
   test('renderDailyLine: text only, no attribution element', () => {
     renderDailyLine({ now: new Date(2026, 6, 15, 9, 0), lines: [{ text: 'Begin again.' }] });
