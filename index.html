@@ -7,6 +7,11 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Log It">
+  <link rel="manifest" href="manifest.json">
+  <!-- iOS ignores the manifest's icons; this link is what it uses. -->
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
   <title>Log It</title>
   <style>
     :root {
@@ -1420,6 +1425,55 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   test('router: no blocking Utilities.sleep', async () => {
     const src = await (await fetch('server/routerWebApp.gs')).text();
     assert(src.indexOf('Utilities.sleep') === -1, 'no blocking sleeps');
+  });
+  test('manifest: valid JSON with the required install fields', async () => {
+    const m = await (await fetch('manifest.json')).json();
+    assertEq(m.name, 'Log It');
+    assertEq(m.short_name, 'Log It');
+    assertEq(m.display, 'standalone');
+    assert(Array.isArray(m.icons) && m.icons.length > 0, 'declares icons');
+  });
+  test('manifest: all paths relative (absolute would 404 on the /log-it/ subpath)', async () => {
+    const m = await (await fetch('manifest.json')).json();
+    for (const [k, v] of [['start_url', m.start_url], ['scope', m.scope], ['id', m.id]]) {
+      assert(!v.startsWith('/'), k + ' must be relative, got ' + v);
+    }
+    for (const i of m.icons) {
+      assert(!i.src.startsWith('/'), 'icon src must be relative, got ' + i.src);
+    }
+  });
+  test('manifest: colours match the app CSS variables', async () => {
+    const m = await (await fetch('manifest.json')).json();
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    assertEq(m.background_color, bg, 'background_color tracks --bg');
+    assertEq(m.theme_color, bg, 'theme_color tracks --bg');
+  });
+  test('manifest: every declared icon actually resolves', async () => {
+    const m = await (await fetch('manifest.json')).json();
+    for (const i of m.icons) {
+      const r = await fetch(i.src, { method: 'HEAD' });
+      assert(r.ok, i.src + ' -> HTTP ' + r.status);
+      assertEq(r.headers.get('content-type'), 'image/png', i.src + ' content-type');
+    }
+  });
+  test('manifest: 192 and 512 icons are declared maskable', async () => {
+    const m = await (await fetch('manifest.json')).json();
+    for (const size of ['192x192', '512x512']) {
+      const i = m.icons.find((x) => x.sizes === size);
+      assert(i, 'declares a ' + size + ' icon');
+      assert(i.purpose.includes('maskable'), size + ' should be maskable');
+    }
+  });
+  test('head: links the manifest and an apple-touch-icon (iOS ignores the manifest)', () => {
+    assert(document.querySelector('link[rel="manifest"]'), 'manifest link present');
+    const apple = document.querySelector('link[rel="apple-touch-icon"]');
+    assert(apple, 'apple-touch-icon link present');
+    assert(!apple.getAttribute('href').startsWith('/'), 'apple-touch-icon href must be relative');
+  });
+  test('apple-touch-icon: resolves at the 180px iOS size', async () => {
+    const href = document.querySelector('link[rel="apple-touch-icon"]').getAttribute('href');
+    const r = await fetch(href, { method: 'HEAD' });
+    assert(r.ok, href + ' -> HTTP ' + r.status);
   });
   test('setMode(text): adds text-mode class + status "Type to log"', () => {
     setMode('text');
