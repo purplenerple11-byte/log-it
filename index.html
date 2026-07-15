@@ -157,13 +157,29 @@
 
     /* ── MODE TOGGLE ── */
     #mode-toggle {
+      position: relative;
       display: flex;
       background: rgba(255, 255, 255, 0.06);
       border-radius: 100px;
       padding: 5px;
       margin-top: 10px;
     }
+    #mode-indicator {
+      position: absolute;
+      top: 5px; left: 5px;
+      width: calc(50% - 5px);
+      height: calc(100% - 10px);
+      background: var(--toggle-bg);
+      border-radius: 100px;
+      transition: transform .3s cubic-bezier(.4,0,.2,1);
+    }
+    #mode-toggle[data-mode="text"] #mode-indicator {
+      transform: translateX(100%);
+    }
     .mode-btn {
+      position: relative;
+      z-index: 1;
+      flex: 1;
       padding: 10px 24px;
       border-radius: 100px;
       border: none;
@@ -172,15 +188,15 @@
       font-size: 15px;
       font-weight: 500;
       cursor: pointer;
-      transition: background .2s, color .2s;
+      transition: color .2s;
       white-space: nowrap;
       display: flex;
       align-items: center;
+      justify-content: center;
       gap: 6px;
     }
-    .mode-btn.active { 
-      background: var(--toggle-bg); 
-      color: var(--toggle-text); 
+    .mode-btn.active {
+      color: var(--toggle-text);
       font-weight: 600;
     }
 
@@ -484,7 +500,8 @@
 
   <div id="hint">speak naturally — it figures out the rest</div>
 
-  <div id="mode-toggle">
+  <div id="mode-toggle" data-mode="voice">
+    <span id="mode-indicator"></span>
     <button class="mode-btn active" id="btn-voice" onclick="setMode('voice')">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
       Voice
@@ -793,6 +810,7 @@ function setMode(m) {
   document.getElementById('btn-voice').classList.toggle('active', m === 'voice');
   document.getElementById('btn-text').classList.toggle('active',  m === 'text');
   document.getElementById('app').classList.toggle('text-mode',    m === 'text');
+  document.getElementById('mode-toggle').dataset.mode = m;
   document.getElementById('transcript').textContent = '';
   setStatus(m === 'voice' ? 'Tap to log' : 'Type to log');
 }
