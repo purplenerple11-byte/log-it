@@ -26,7 +26,8 @@ PWA (index.html, GitHub Pages)
   ← enriched confirmation shown in confirm card
 ```
 
-- **Client** (`index.html`, ~1400 lines, single file, no build/npm):
+- **Client** (`index.html`, ~1150 lines, no build/npm; tests live in
+  `tests.js`, loaded only under `?test=1`):
   - Submission: `processEntry` → `submitWithRetry` (3 attempts, backoff 1s/3s)
     → `callRouter` (15s `AbortController` timeout, typed `SubmitError`:
     timeout/network/http/server; `isTransient` decides retry). Input held in
@@ -62,6 +63,9 @@ PWA (index.html, GitHub Pages)
 - In-page harness: serve repo (`python3 -m http.server 8777`) and open
   `index.html?test=1` → renders PASS/FAIL + footer. **Currently 54 passed, 0
   failed.** Any change must keep it green; new features add tests there.
+  Tests live in `tests.js`; `index.html` injects it only when `?test=1` is
+  set, so production never fetches it. The harness reads production globals
+  (one-way — production must never reference test symbols).
 - `?mock=<success|server|http4xx|http5xx|network|timeout>` fakes the router in
   the real UI (set any non-empty router URL in localStorage first);
   `&to=<ms>` shortens the 15s timeout. Both dev switches are inert without
@@ -96,7 +100,15 @@ PWA (index.html, GitHub Pages)
 6. `.gitignore` for the personal files (.rtf/.pdf/.txt/.DS_Store). Verified
    none had ever been committed on any branch — prevention only, no history
    rewrite. Merged to `Main`.
-7. PWA manifest + app icon (2026-07-15, branch `feat/pwa-manifest`).
+7. PWA manifest + app icon. Icon is a dark dot on a solid `--action` field;
+   solid field means Android's maskable crop can't clip it, so one image
+   serves "any maskable". Regenerate with `python3 tools/make-icons.py`
+   (stdlib only). iOS ignores manifest icons — the `apple-touch-icon` link
+   at 180px is what it uses. **User confirmed install prompt fires on
+   device.**
+8. Test harness split into `tests.js` (index.html 56.8KB → 40.3KB, -29%).
+9. **v4.2 validated live by the user** ("worked 2-4 at susans" → Susans,
+   2:00pm-4:00pm, $40). The NaN fix is confirmed in production.
 
 ## Key facts (don't re-litigate)
 
@@ -115,12 +127,13 @@ PWA (index.html, GitHub Pages)
 
 ## Next steps (prioritized)
 
-1. Strip/split the dev test harness from production `index.html` (~10KB/20%
-   ships to every load; lines ~1097-end).
-2. Dedupe the 3.8s confirm timing (3800/`3.8s`/3900 in three places — one
+1. Dedupe the 3.8s confirm timing (3800/`3.8s`/3900 in three places — one
    constant) and drop the pointless `!important` on `#card-fill`.
-3. Voice capture: `recognition.continuous=false` ends on natural pauses —
+2. Voice capture: `recognition.continuous=false` ends on natural pauses —
    discuss switching for long rambles (relates to old cutoff complaint).
+3. (Optional) `?mock=` is still in `index.html` (~15 lines, wired into
+   `callRouter` at ~line 948, inert without the URL param). Left there
+   during the harness split because extracting it is surgery, not a move.
 4. **Offline queue** (raised while scoping the manifest, deliberately deferred):
    a service worker caching the shell + queueing failed logs to retry when back
    online. Real value if logging where reception is bad, but it interacts with
