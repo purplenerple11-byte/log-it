@@ -630,8 +630,21 @@ function catKey(category, sub_route) {
 // ================================================================
 // LOCAL STORAGE (graceful in private/incognito mode)
 // ================================================================
+// Baked-in config so a cache clear doesn't mean re-typing six fields on a phone.
+// localStorage still wins when set — the ⚙ panel can override any of these, and
+// saving a field blank falls back here rather than to an empty string.
+const CFG_DEFAULTS = {
+  router_url:    'https://script.google.com/macros/s/AKfycbx4VyyLzfafaKkAsNP2LUbSaLOFxS-vX34c-3lHIQPLIHIoqBqOEXghIRzS4n8vQ-24/exec',
+  sheet_tip:     '18KnFW0OxCWJ0PaAoRc7Yds0a6oKjsNFocUA7xhm8AlM',
+  sheet_meal:    '1L-amUFiHOYVjf00yVcWT_l7G0iA70gMudLPimwfsY9k',
+  sheet_grocery: '1iWQkJWJl1xijT5KnnB5aguxdARVjBfWQDTLDTRxZCE0',
+  sheet_idea:    '1H3ATTJXR-WKQuKmcFknbEraSxzGNEazsUtl1Y53kD8k',
+  sheet_car:     '1QBMgpVM7E8g9FvTm13QSDGj3irQ3drePafOiLwwixko'
+};
+
 const LS = {
-  get: (k)    => { try { return localStorage.getItem(k) || ''; } catch { return ''; } },
+  get: (k)    => { try { return localStorage.getItem(k) || CFG_DEFAULTS[k] || ''; }
+                   catch { return CFG_DEFAULTS[k] || ''; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} }
 };
 

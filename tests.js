@@ -458,5 +458,26 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(am >= 40, 'am pool only ' + am);
     assert(pm >= 40, 'pm pool only ' + pm);
   });
+  test('CFG_DEFAULTS: all six fields baked in and non-empty', () => {
+    const keys = ['router_url', 'sheet_tip', 'sheet_meal', 'sheet_grocery', 'sheet_idea', 'sheet_car'];
+    assertEq(Object.keys(CFG_DEFAULTS).length, keys.length, 'unexpected default key count');
+    for (const k of keys) {
+      assert(typeof CFG_DEFAULTS[k] === 'string' && CFG_DEFAULTS[k].length > 0, 'missing default: ' + k);
+    }
+    assert(CFG_DEFAULTS.router_url.endsWith('/exec'), 'router_url should be an /exec Web App URL');
+  });
+  test('LS.get: falls back to CFG_DEFAULTS, stored value wins', () => {
+    const prior = localStorage.getItem('sheet_car');
+    try {
+      localStorage.removeItem('sheet_car');
+      assertEq(LS.get('sheet_car'), CFG_DEFAULTS.sheet_car, 'cleared key should fall back');
+      localStorage.setItem('sheet_car', 'OVERRIDE');
+      assertEq(LS.get('sheet_car'), 'OVERRIDE', 'stored value should win');
+      assertEq(LS.get('no_such_key_xyz'), '', 'keys without a default stay empty');
+    } finally {
+      if (prior === null) localStorage.removeItem('sheet_car');
+      else localStorage.setItem('sheet_car', prior);
+    }
+  });
   runTests();
 }
