@@ -1,4 +1,4 @@
-# Log It — Session Handoff (2026-07-15)
+# Log It — Session Handoff (2026-07-18)
 
 Read this first. It's the state of the project, how we work, and what's next.
 
@@ -42,6 +42,15 @@ PWA (index.html, GitHub Pages)
     (= midnight reset, no timer). Tiny 15px orange squares under the
     Voice/Type toggle; tap expands to bullet rows (via `CAT_UI` + `catKey`),
     tap collapses. Empty → hidden. No hint text (removed deliberately).
+  - Expand animation: the squares and the cards are the *same* elements —
+    `.today-box` morphs in place. Because collapse/expand is a **layout**
+    change (wrapped squares → stacked cards), transitions can't interpolate
+    position: the boxes teleport and only size animates. The `today-fan`
+    keyframe supplies the travel, starting each card lifted toward the row so
+    they fan downward. Stagger is index-driven — `renderLogBox` emits
+    `style="--i:N"`, CSS reads it for both delay and start offset. Don't go
+    back to `nth-child`: it capped at `n+4`, so the fan flattened after three
+    logs. `--fan-step` clamps at 6 to bound a busy day (~330ms total).
   - Mode toggle morph: `text-mode` class on `#app`; `#mic-btn` morphs into the
     text box (320ms cubic-bezier(.4,0,.2,1)); real `#text-input` fades in over
     the shell; headings "Hold to log" / "Type to log".
@@ -56,13 +65,19 @@ PWA (index.html, GitHub Pages)
   to the `/log-it/` Pages subpath, not the domain root. A test guards this.
 - **Categories/sheets:** tip (Track|Susans tabs), meal (Log + Daily Summary),
   grocery (Raw Log + categorized Grocery List), idea (Ideas + Materials),
-  car (Maintenance Log). Sheet IDs entered in the app's ⚙ settings
-  (localStorage), sent per-request; Gemini key lives in Script Properties.
+  car (Maintenance Log). Sheet IDs and the Web App URL are **baked into
+  `CFG_DEFAULTS` in `index.html`**; the ⚙ settings panel (localStorage) still
+  overrides them per-field, and `LS.get` falls back to the default when a key
+  is unset — so a cache clear no longer means retyping six fields on a phone.
+  Sent per-request; Gemini key lives in Script Properties.
+  ⚠ The repo is public, so those six values are readable. Accepted knowingly
+  (see session history #11) — the exposure is unsolicited writes to the
+  sheets, not key theft. Don't "fix" this by ripping the defaults out.
 
 ## Testing (browser-only, no CLI runner)
 
 - In-page harness: serve repo (`python3 -m http.server 8777`) and open
-  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 68 passed, 0
+  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 72 passed, 0
   failed.** Any change must keep it green; new features add tests there.
   Tests live in `tests.js`; `index.html` injects it only when `?test=1` is
   set, so production never fetches it. The harness reads production globals
@@ -116,6 +131,17 @@ PWA (index.html, GitHub Pages)
     holds still within a window and rolls at 5pm and midnight. Pure
     `lineFor(date, lines)`; no storage, no timer. `#hint` lost
     `white-space: nowrap` so quotes wrap.
+11. **Config baked in** (`CFG_DEFAULTS`): the Web App URL + five sheet IDs are
+    hardcoded, with `LS.get` falling back to them when localStorage is empty.
+    Motivation: a cache clear meant retyping six long IDs on a phone. The ⚙
+    panel still wins when set, so it stays a live override; saving a field
+    blank now resets to the baked-in value rather than emptying it. **Trade-off
+    accepted deliberately by the user after being told the repo is public** —
+    anyone reading it can POST rows into these sheets. The Gemini key is
+    unaffected (Script Properties). Live; user verified a real log on device.
+12. Today-view fan animation (see the Today view notes above). Index-driven
+    stagger replaced the `nth-child` delays, which also fixed the fan
+    flattening after the 3rd log. Live.
 
 ## Key facts (don't re-litigate)
 
