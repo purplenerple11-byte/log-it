@@ -280,6 +280,22 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(html.indexOf('9:05 AM') !== -1, 'has time');
     assert(html.indexOf('&lt;b&gt;') !== -1, 'escaped message');
   });
+  test('renderLogBox: emits --i for the fan stagger, defaulting to 0', () => {
+    const entry = { ts: Date.now(), category: 'grocery', sub_route: '', message: 'x' };
+    assert(renderLogBox(entry, 3).indexOf('--i:3') !== -1, 'index 3 should set --i:3');
+    assert(renderLogBox(entry).indexOf('--i:0') !== -1, 'bare call should default to --i:0');
+    // map() passes (entry, i, array); the third arg must not corrupt --i.
+    const html = [entry, entry].map(renderLogBox);
+    assert(html[1].indexOf('--i:1') !== -1, 'map should stagger by position');
+  });
+  test('fan: every rendered box carries a distinct, ascending --i', () => {
+    const now = Date.now();
+    const logs = [1,2,3,4,5].map((n) => ({ ts: now, category: 'idea', sub_route: '', message: 'm' + n }));
+    const row = document.createElement('div');
+    row.innerHTML = logs.map(renderLogBox).join('');
+    const vals = [...row.querySelectorAll('.today-box')].map((b) => b.style.getPropertyValue('--i').trim());
+    assertEq(vals.join(','), '0,1,2,3,4', 'boxes should be indexed in order');
+  });
   test('router: v4.2 source parses as valid JS', async () => {
     const src = await (await fetch('server/routerWebApp.gs')).text();
     new Function(src); // parse check only — Google globals are only referenced at runtime

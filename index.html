@@ -466,10 +466,29 @@
       border-radius: 14px; padding: 0 14px;
       box-shadow: 0 2px 6px rgba(0,0,0,0.25);
     }
-    #today-row.expanded .today-box:nth-child(1) { transition-delay: 0ms; }
-    #today-row.expanded .today-box:nth-child(2) { transition-delay: 70ms; }
-    #today-row.expanded .today-box:nth-child(3) { transition-delay: 140ms; }
-    #today-row.expanded .today-box:nth-child(n+4) { transition-delay: 200ms; }
+    /* Stagger is index-driven (--i, set per box by renderLogBox) rather than
+       nth-child, so the fan keeps its cascade past the 4th log. --fan-step is
+       clamped so a 20-log day doesn't turn into a two-second sequence. */
+    .today-box { --fan-step: min(var(--i, 0), 6); }
+    #today-row.expanded .today-box { transition-delay: calc(var(--fan-step) * 55ms); }
+    #today-row.expanded .today-emoji,
+    #today-row.expanded .today-details { transition-delay: calc(150ms + var(--fan-step) * 55ms); }
+
+    /* The collapse/expand is a layout change (wrapped squares -> stacked cards),
+       which transitions can't interpolate — the boxes teleport and only their
+       size animates. This keyframe supplies the travel: each card starts lifted
+       toward the row and falls into place, further for later cards, so they
+       fan downward instead of appearing all at once. */
+    @media (prefers-reduced-motion: no-preference) {
+      #today-row.expanded .today-box {
+        animation: today-fan .34s cubic-bezier(.4,0,.2,1) backwards;
+        animation-delay: calc(var(--fan-step) * 55ms);
+      }
+      @keyframes today-fan {
+        from { transform: translateY(calc(-10px - var(--fan-step) * 7px)); opacity: .55; }
+        to   { transform: none; opacity: 1; }
+      }
+    }
     .today-emoji {
       font-size: 22px; flex-shrink: 0; width: 0; opacity: 0; overflow: hidden;
       transition: opacity .16s ease, width .2s ease, margin .2s ease;
@@ -711,11 +730,13 @@ function recordTodayLog(category, sub_route, message, text, deps = {}) {
 // ================================================================
 // TODAY VIEW — RENDER LAYER
 // ================================================================
-function renderLogBox(entry) {
+// `i` is the box's position in the list; CSS reads it as --i to stagger the
+// fan. Defaults to 0 so a direct call (tests) still renders a valid box.
+function renderLogBox(entry, i = 0) {
   const key = catKey(entry.category, entry.sub_route);
   const cfg = CAT_UI[key] || { icon: '•', label: entry.category || 'Log' };
   const time = formatLogTime(entry.ts);
-  return '<div class="today-box">' +
+  return '<div class="today-box" style="--i:' + (Number(i) || 0) + '">' +
       '<span class="today-emoji">' + cfg.icon + '</span>' +
       '<div class="today-details">' +
         '<div class="today-label-row">' +
