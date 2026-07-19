@@ -1,0 +1,110 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+`docs/HANDOFF.md` is the living state-of-the-project doc — session history, what's shipped, and the
+prioritized backlog. Read it after this file. This file covers what stays true between sessions.
+
+## Commands
+
+There is no build, no npm, no lint, and no CLI test runner. Everything is browser-driven.
+
+```bash
+python3 -m http.server 8777        # serve the repo root; open http://localhost:8777/index.html
+python3 tools/make-icons.py        # regenerate icons/ (stdlib only, by design)
+```
+
+- **Tests:** open `index.html?test=1`. The harness hides the app, runs everything, and appends a
+  `<pre>` with PASS/FAIL lines and a `N passed, N failed` footer. Read it via
+  `document.querySelector('pre').textContent`. Must stay green; new features add tests to `tests.js`.
+- **Running a single test:** not supported — the harness runs all registered tests, all-or-nothing.
+  To isolate one, temporarily comment out the others' `test(...)` registrations.
+- **Manual/mock runs:** `?mock=<success|server|http4xx|http5xx|network|timeout>` fakes the router
+  inside the real UI (set any non-empty `router_url` in localStorage first). `&to=<ms>` shortens the
+  15s timeout. Both dev switches are inert without their URL params.
+- The Browser pane blocks `file://` — always go through the local HTTP server.
+
+## Architecture
+
+A single-user, phone-first PWA that turns raw voice/text into structured rows across per-domain
+Google Sheets. Live at `purplenerple11-byte.github.io/log-it/` via GitHub Pages. Default branch is
+**`Main`** (capital M) — pushing to it deploys.
+
+```
+index.html (PWA, GitHub Pages)
+  → fetch POST text/plain          # text/plain deliberately avoids a CORS preflight
+    → Apps Script Web App          # source of truth in repo: server/routerWebApp.gs
+      → Gemini API                 # SYSTEM_PROMPT via systemInstruction, JSON response mode
+                                   # chain: gemini-3.1-flash-lite → gemini-3.5-flash (1 attempt each)
+      → SpreadsheetApp             # writes to per-category sheets
+    ← {success, category, sub_route, message}
+  ← confirmation card
+```
+
+Four files carry the whole system: `index.html` (~1150 lines, app + styles + logic, no framework),
+`daily.js` (the daily line's content list + pure selectors — production, loaded on every page view),
+`tests.js` (harness, injected only under `?test=1`), and `server/routerWebApp.gs` (the router).
+
+### Invariants — these are load-bearing, don't undo them
+
+- **Server worst case (~5-9s) must stay under the client's 15s timeout.** That gap is the *only*
+  reason client retries are duplicate-safe. Never add server-side retries or sleeps back into the
+  `.gs` — that's the bug v4.2 fixed (up to 18 Gemini calls + duplicate rows).
+- **Apps Script does not auto-sync.** `server/routerWebApp.gs` is the source of truth by convention
+  only; the user's Apps Script editor is the actual runtime. After any server change, remind the
+  user to paste it in and create a **new deployment** — nothing happens otherwise.
+- **All paths must stay relative.** `start_url`/`scope` in `manifest.json`, the `tests.js` injection,
+  and icon hrefs have to resolve under the `/log-it/` Pages subpath, not the domain root. A test
+  guards the manifest.
+- **`tests.js` depends on production one-way.** The harness reads production globals; production must
+  never reference test symbols. It hides `#app` rather than wiping the DOM, because integration tests
+  manipulate real elements.
+- **The Gemini key stays out of the client** — it lives in Apps Script Script Properties, and nothing
+  else may move it. Sheet IDs and the Web App URL are a deliberate exception: they're baked into
+  `CFG_DEFAULTS` in `index.html` so a cache clear doesn't mean retyping six fields on a phone. The ⚙
+  panel (localStorage) overrides them per-field; `LS.get` falls back to the default when unset. The
+  repo is public, so those six values are readable — the user accepted that knowingly, having been
+  told. The exposure is unsolicited writes to the sheets, not key theft. **Don't undo this** as a
+  security cleanup; if it ever needs reversing, the replacement is one-tap import/export of all six,
+  not a return to typing them in.
+
+### Client flow
+
+`processEntry` → `submitWithRetry` (3 attempts, 1s/3s backoff) → `callRouter` (15s `AbortController`,
+typed `SubmitError` of kind timeout/network/http/server; `isTransient` decides retry). Input is held
+in `pendingEntry` and cleared **only** on success; failures raise `#fail-card` (Retry/Copy/Dismiss).
+
+Successful logs are mirrored to `localStorage.today_logs`, pruned to the local day on write — that's
+the midnight reset, no timer involved. Layout is top-anchored so the mic never shifts when the Today
+list expands.
+
+The squares and the expanded cards are the same elements (`.today-box`). Expanding is a layout change,
+which transitions can't interpolate — hence the `today-fan` keyframe for the downward travel. Its
+stagger is index-driven: `renderLogBox` emits `style="--i:N"` and CSS derives both delay and start
+offset from it. Don't refactor that back to `nth-child` — the old rules capped at `n+4`, so the fan
+flattened after the third log.
+
+Voice capture is **press-and-hold** (`pointerdown`/`up`/`leave`/`cancel`) with
+`recognition.continuous = true`, so a natural speaking pause no longer ends the entry.
+
+### Categories
+
+tip (Track|Susans tabs), meal (Log + Daily Summary), grocery (Raw Log + categorized List),
+idea (Ideas + Materials), car (Maintenance Log).
+
+## Conventions
+
+- Superpowers flow: brainstorm (one question at a time) → spec in `docs/specs/` → plan in
+  `docs/plans/` → implement → verify in-browser → merge.
+- **Push only when the user says so** — push is a live deploy. Never delete remote branches unless
+  the user names them.
+- Aesthetic: minimal, dark (`#121316`), orange accent `--action: #cc785c`. The user is the only user,
+  so affordance hints can be dropped.
+- Cost is a non-issue (~$0.0005/log). Do not spend effort on token/cost optimization — latency and
+  correctness only.
+- Free-tier limits worth respecting: `gemini-3.1-flash-lite` 15 RPM / 500 RPD; `gemini-3.5-flash`
+  **20 RPD** — the fallback fires at most once per log by design.
+- Model names `gemini-3.1-flash-lite` / `gemini-3.5-flash` are real (post Jan-2026), not typos.
+- The repo is public and serves Pages; `.gitignore` keeps the user's personal `.rtf`/`.pdf`/`.txt`
+  working files out. Legacy per-domain Apps Script exports sitting in the repo folder are untracked
+  predecessors, superseded by the router.
