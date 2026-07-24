@@ -163,7 +163,7 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   });
   test('processEntry: success clears pendingEntry and text input', async () => {
     document.getElementById('text-input').value = 'buy milk';
-    window.__testRouter = async () => ({ success: true, category: 'grocery', sub_route: '', message: 'Milk logged.' });
+    window.__testRouter = async () => ({ success: true, category: 'idea', sub_route: '', message: 'Idea logged.' });
     window.__testSleep = () => Promise.resolve();
     await processEntry('buy milk');
     assertEq(pendingEntry, null);
@@ -225,11 +225,11 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   test('recordTodayLog: appends an entry', () => {
     const now = new Date(2026,6,14,9,5).getTime();
     const s = fakeStore();
-    recordTodayLog('grocery', '', 'Milk logged.', 'buy milk', { get: s.get, set: s.set, now });
+    recordTodayLog('idea', '', 'Idea logged.', 'what if', { get: s.get, set: s.set, now });
     const logs = readTodayLogs({ get: s.get, now });
     assertEq(logs.length, 1);
-    assertEq(logs[0].category, 'grocery');
-    assertEq(logs[0].message, 'Milk logged.');
+    assertEq(logs[0].category, 'idea');
+    assertEq(logs[0].message, 'Idea logged.');
   });
   test('recordTodayLog: prunes previous-day entries', () => {
     const now = new Date(2026,6,14,9,5).getTime();
@@ -254,7 +254,7 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   test('renderTodayView: renders one box per entry and shows section', () => {
     const now = new Date(2026,6,14,9,5).getTime();
     const s = fakeStore(JSON.stringify([
-      { ts: now, day: '2026-07-14', category: 'grocery', sub_route: '', message: 'Milk logged.', text: 'm' },
+      { ts: now, day: '2026-07-14', category: 'idea', sub_route: '', message: 'Idea logged.', text: 'm' },
       { ts: now - 1000, day: '2026-07-14', category: 'meal', sub_route: '', message: 'Lunch.', text: 'l' }
     ]));
     renderTodayView({ get: s.get, now });
@@ -275,13 +275,13 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(!row.classList.contains('expanded'), 'should collapse');
   });
   test('renderLogBox: contains label, time, escaped message', () => {
-    const html = renderLogBox({ ts: new Date(2026,6,14,9,5).getTime(), category: 'grocery', sub_route: '', message: 'x <b>' });
-    assert(html.indexOf('Grocery') !== -1, 'has label');
+    const html = renderLogBox({ ts: new Date(2026,6,14,9,5).getTime(), category: 'idea', sub_route: '', message: 'x <b>' });
+    assert(html.indexOf('Idea') !== -1, 'has label');
     assert(html.indexOf('9:05 AM') !== -1, 'has time');
     assert(html.indexOf('&lt;b&gt;') !== -1, 'escaped message');
   });
   test('renderLogBox: emits --i for the fan stagger, defaulting to 0', () => {
-    const entry = { ts: Date.now(), category: 'grocery', sub_route: '', message: 'x' };
+    const entry = { ts: Date.now(), category: 'idea', sub_route: '', message: 'x' };
     assert(renderLogBox(entry, 3).indexOf('--i:3') !== -1, 'index 3 should set --i:3');
     assert(renderLogBox(entry).indexOf('--i:0') !== -1, 'bare call should default to --i:0');
     // map() passes (entry, i, array); the third arg must not corrupt --i.
@@ -323,6 +323,18 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   test('router: no blocking Utilities.sleep', async () => {
     const src = await (await fetch('server/routerWebApp.gs')).text();
     assert(src.indexOf('Utilities.sleep') === -1, 'no blocking sleeps');
+  });
+  test('router + client: grocery is fully retired', async () => {
+    // Strip comments — the v4.4 header legitimately mentions grocery in prose;
+    // what must be gone is executable grocery code and data.
+    const raw = await (await fetch('server/routerWebApp.gs')).text();
+    const code = raw.replace(/\/\/[^\n]*/g, '');
+    assert(code.indexOf('handleGrocery') === -1, 'handleGrocery still defined/called');
+    assert(code.indexOf("'grocery'") === -1, 'grocery category token still in code');
+    assert(code.indexOf('GROCERY:') === -1, 'grocery schema still in the prompt');
+    assert(!('grocery' in CAT_UI), 'CAT_UI still has a grocery entry');
+    assert(!('sheet_grocery' in CFG_DEFAULTS), 'sheet_grocery default still present');
+    assert(document.getElementById('cfg-grocery') === null, 'grocery config field still in the DOM');
   });
   test('manifest: valid JSON with the required install fields', async () => {
     const m = await (await fetch('manifest.json')).json();
@@ -485,9 +497,10 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(am >= 40, 'am pool only ' + am);
     assert(pm >= 40, 'pm pool only ' + pm);
   });
-  test('CFG_DEFAULTS: all six fields baked in and non-empty', () => {
-    const keys = ['router_url', 'sheet_tip', 'sheet_meal', 'sheet_grocery', 'sheet_idea', 'sheet_car'];
+  test('CFG_DEFAULTS: all five fields baked in and non-empty', () => {
+    const keys = ['router_url', 'sheet_tip', 'sheet_meal', 'sheet_idea', 'sheet_car'];
     assertEq(Object.keys(CFG_DEFAULTS).length, keys.length, 'unexpected default key count');
+    assert(!('sheet_grocery' in CFG_DEFAULTS), 'grocery default should be gone');
     for (const k of keys) {
       assert(typeof CFG_DEFAULTS[k] === 'string' && CFG_DEFAULTS[k].length > 0, 'missing default: ' + k);
     }

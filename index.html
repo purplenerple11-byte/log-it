@@ -612,10 +612,6 @@
     <input type="text" class="cfg-input" id="cfg-meal" placeholder="Sheet ID">
   </div>
   <div class="cfg-field">
-    <label class="cfg-label" for="cfg-grocery">Grocery</label>
-    <input type="text" class="cfg-input" id="cfg-grocery" placeholder="Sheet ID">
-  </div>
-  <div class="cfg-field">
     <label class="cfg-label" for="cfg-idea">Ideas</label>
     <input type="text" class="cfg-input" id="cfg-idea" placeholder="Sheet ID">
   </div>
@@ -637,7 +633,6 @@ const CAT_UI = {
   'tip_Track':  { icon: '🏇', color: '#e8890c', label: 'Track'    },
   'tip_Susans': { icon: '🌸', color: '#d946b8', label: "Susan's"  },
   'meal':       { icon: '🍽️', color: '#22c55e', label: 'Meal'     },
-  'grocery':    { icon: '🛒', color: '#3b82f6', label: 'Grocery'  },
   'idea':       { icon: '💡', color: '#eab308', label: 'Idea'     },
   'car':        { icon: '🚗', color: '#9ca3af', label: 'Car'      },
 };
@@ -656,7 +651,6 @@ const CFG_DEFAULTS = {
   router_url:    'https://script.google.com/macros/s/AKfycbx4VyyLzfafaKkAsNP2LUbSaLOFxS-vX34c-3lHIQPLIHIoqBqOEXghIRzS4n8vQ-24/exec',
   sheet_tip:     '18KnFW0OxCWJ0PaAoRc7Yds0a6oKjsNFocUA7xhm8AlM',
   sheet_meal:    '1L-amUFiHOYVjf00yVcWT_l7G0iA70gMudLPimwfsY9k',
-  sheet_grocery: '1iWQkJWJl1xijT5KnnB5aguxdARVjBfWQDTLDTRxZCE0',
   sheet_idea:    '1H3ATTJXR-WKQuKmcFknbEraSxzGNEazsUtl1Y53kD8k',
   sheet_car:     '1QBMgpVM7E8g9FvTm13QSDGj3irQ3drePafOiLwwixko'
 };
@@ -796,7 +790,7 @@ let __mockScenario = null;
 function mockFetchFor(scenario) {
   return (url, opts) => {
     switch (scenario) {
-      case 'success': return Promise.resolve({ ok: true, json: async () => ({ success: true, category: 'grocery', sub_route: '', message: 'Mock: item logged ✓' }) });
+      case 'success': return Promise.resolve({ ok: true, json: async () => ({ success: true, category: 'idea', sub_route: '', message: 'Mock: idea logged ✓' }) });
       case 'server':  return Promise.resolve({ ok: true, json: async () => ({ success: false, error: 'Mock: router rejected this' }) });
       case 'http5xx': return Promise.resolve({ ok: false, status: 503, json: async () => ({}) });
       case 'http4xx': return Promise.resolve({ ok: false, status: 400, json: async () => ({}) });
@@ -816,7 +810,6 @@ function loadConfig() {
   document.getElementById('cfg-router').value  = LS.get('router_url');
   document.getElementById('cfg-tip').value     = LS.get('sheet_tip');
   document.getElementById('cfg-meal').value    = LS.get('sheet_meal');
-  document.getElementById('cfg-grocery').value = LS.get('sheet_grocery');
   document.getElementById('cfg-idea').value    = LS.get('sheet_idea');
   document.getElementById('cfg-car').value     = LS.get('sheet_car');
 }
@@ -825,7 +818,6 @@ function saveConfig() {
   LS.set('router_url',    document.getElementById('cfg-router').value.trim());
   LS.set('sheet_tip',     document.getElementById('cfg-tip').value.trim());
   LS.set('sheet_meal',    document.getElementById('cfg-meal').value.trim());
-  LS.set('sheet_grocery', document.getElementById('cfg-grocery').value.trim());
   LS.set('sheet_idea',    document.getElementById('cfg-idea').value.trim());
   LS.set('sheet_car',     document.getElementById('cfg-car').value.trim());
 
@@ -1008,7 +1000,6 @@ async function callRouter(text, deps = {}) {
     sheet_ids: {
       tip:     LS.get('sheet_tip'),
       meal:    LS.get('sheet_meal'),
-      grocery: LS.get('sheet_grocery'),
       idea:    LS.get('sheet_idea'),
       car:     LS.get('sheet_car')
     }
