@@ -16,9 +16,14 @@ capital M).
 PWA (index.html, GitHub Pages)
   → fetch POST text/plain (avoids CORS preflight)
     → Google Apps Script Web App  ("Execute as: Me", access: Anyone)
-       source of truth in repo: server/routerWebApp.gs (v4.2)
-       ⚠ Apps Script does NOT auto-sync: after editing that file, the user
-         must paste it into the Apps Script editor and create a new deployment
+       source of truth in repo: server/routerWebApp.gs (v4.3) +
+         server/tipRouting.js (pasted alongside it as a 2nd file in the
+         same Apps Script project — same project, NOT a separate one)
+       ⚠ Apps Script does NOT auto-sync: after editing those files, the user
+         must paste them in and publish via Deploy → Manage deployments →
+         pencil → Version: New version. NOT "New deployment" — that mints a
+         fresh /exec URL and the current one is baked into CFG_DEFAULTS, so
+         the app would silently keep running the old code.
       → Gemini API (systemInstruction SYSTEM_PROMPT, JSON response mode)
          model chain: gemini-3.1-flash-lite → gemini-3.5-flash (1 attempt each)
       → SpreadsheetApp writes to per-category sheets
@@ -154,8 +159,9 @@ PWA (index.html, GitHub Pages)
     code — explicit venue, then tips (Track-only), then clock-in before noon,
     else Track. `shiftHours()` also derives the length from the times instead
     of trusting the model's arithmetic. 18 new tests; verified red against the
-    old behavior before going green. **Needs the user to paste `tipRouting.gs`
-    into Apps Script and cut a new deployment.**
+    old behavior before going green. **Shipped and confirmed live by the user**
+    on 2026-07-23, after pasting both files into the Log It - Router project
+    and publishing a new version of the existing deployment.
 
 ## Key facts (don't re-litigate)
 
@@ -178,6 +184,14 @@ PWA (index.html, GitHub Pages)
   `[ts, hours, tips, rate, notes]` with no Date column, while the legacy
   script's header comment claims `A:Timestamp | B:Date | C:Hours | D:Tips |
   E:Hourly Rate | F:Notes`. Worth one glance at the sheet.
+- First request after publishing a new version can be slow or time out
+  client-side while the Apps Script container warms up. Observed 2026-07-23:
+  ~4 failed attempts, zero Gemini calls logged, zero rows written, then normal
+  service. It dies before reaching Gemini, so it is write-safe — but note it
+  does bend the duplicate-safety invariant, which assumes the server always
+  finishes under the client's 15s timeout. If a slow first call ever DOES
+  reach the sheet, the retries could double-write; check for dupes before
+  assuming otherwise.
 - The 0.5h Track break deduction is pure script (`BREAK_DEDUCTION_HRS`), not
   AI, and the prompt says nothing about breaks — so there is no double
   deduction. The legacy script's "only if over 5 hours" rule is gone; the

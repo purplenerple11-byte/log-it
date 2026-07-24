@@ -19,7 +19,9 @@
 // v4.2 changes: removed per-model retry loop/sleep so server worst case
 // stays under the client's 15s timeout; fixed "+ +" NaN bug in SYSTEM_PROMPT.
 //
-// After any change, create a NEW deployment.
+// After any change: Deploy → Manage deployments → pencil → Version: New version.
+// NOT "New deployment" — that mints a fresh /exec URL, and the old one is baked
+// into CFG_DEFAULTS in index.html, so the app would keep hitting the old code.
 // ================================================================
 
 // 2-Tier Locked Chain: Pinned primary prevents math/routing regression;

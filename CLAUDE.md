@@ -62,7 +62,12 @@ Five files carry the whole system: `index.html` (~1150 lines, app + styles + log
   tips (Track-only; Susans is flat $20/hr) → clock-in before noon → Track by default.
 - **Apps Script does not auto-sync.** `server/routerWebApp.gs` is the source of truth by convention
   only; the user's Apps Script editor is the actual runtime. After any server change, remind the
-  user to paste it in and create a **new deployment** — nothing happens otherwise.
+  user to paste it in and publish — nothing happens otherwise. Publishing means **Deploy →
+  Manage deployments → pencil → Version: New version**, *not* "New deployment": a new
+  deployment mints a fresh `/exec` URL, and the current one is baked into `CFG_DEFAULTS`,
+  so the app would silently keep hitting the old code. Expect the first request after a
+  version bump to be slow or to time out client-side while the container warms up; it
+  never reaches Gemini, so it writes nothing and is safe to retry.
 - **All paths must stay relative.** `start_url`/`scope` in `manifest.json`, the `tests.js` injection,
   and icon hrefs have to resolve under the `/log-it/` Pages subpath, not the domain root. A test
   guards the manifest.
