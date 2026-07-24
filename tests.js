@@ -306,8 +306,19 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   });
   test('router: NaN "+ +" prompt bug fixed', async () => {
     const src = await (await fetch('server/routerWebApp.gs')).text();
-    assert(!/\+\s*\+\s*'- Ambiguous/.test(src), 'NaN ++ bug fixed');
-    assert(src.indexOf("'- Ambiguous times") !== -1, 'ambiguous rule present');
+    // Guard the whole concat chain, not one line — a stray "+ +" anywhere in it
+    // turns the prompt into NaN, which is how this shipped once already.
+    assert(!/\+\s*\+\s*'/.test(src), 'stray "+ +" in the prompt concatenation');
+    assert(/7 8 9 10 11 . AM/.test(src), 'am/pm disambiguation rule present');
+  });
+  test('router: the prompt extracts facts and never picks the tip tab', async () => {
+    const src = await (await fetch('server/routerWebApp.gs')).text();
+    // The two-schema prompt is what let phrasing decide the tab. One shape now,
+    // and routeTip() owns the decision — see server/tipRouting.js.
+    assert(src.indexOf('"sub_route":"Susans"') === -1, 'Susans must not be a prompt-chosen sub_route');
+    assert(src.indexOf('"sub_route":"Track"') === -1, 'Track must not be a prompt-chosen sub_route');
+    assert(src.indexOf('sub_route = routeTip(data)') !== -1, 'doPost must route tips in code');
+    assert(src.indexOf('shiftHours(data.clock_in') !== -1, 'handleTip must derive hours from the clock times');
   });
   test('router: no blocking Utilities.sleep', async () => {
     const src = await (await fetch('server/routerWebApp.gs')).text();
@@ -495,5 +506,83 @@ if (new URLSearchParams(location.search).get('test') === '1') {
       else localStorage.setItem('sheet_car', prior);
     }
   });
+  // ---- TIP TAB ROUTING (server/tipRouting.js) ----
+  // Routing used to live in the Gemini prompt and was decided by whichever of
+  // two output schemas the entry's phrasing happened to fit. These cases are
+  // the fields the model now emits; the tab is decided here, in code.
+  const ROUTING_CASES = [
+    // The three real failures. All went to Susans; all belong in Track.
+    ['9:18 in, 6:50 out, 350 dollars in tips.',
+      { venue: null, clock_in: '09:18', clock_out: '18:50', tips: 350 }, 'Track'],
+    ['9:18am in, 6:50pm out, 350 dollars in tips.',
+      { venue: null, clock_in: '09:18', clock_out: '18:50', tips: 350 }, 'Track'],
+    ['9:18 in, 6:50 out, $350 in tips.',
+      { venue: null, clock_in: '09:18', clock_out: '18:50', tips: 350 }, 'Track'],
+    // Time-only entries fall back to the clock-in rule.
+    ['2-4',   { venue: null, clock_in: '14:00', clock_out: '16:00', tips: null }, 'Susans'],
+    ['8-4',   { venue: null, clock_in: '08:00', clock_out: '16:00', tips: null }, 'Track'],
+    ['11-7',  { venue: null, clock_in: '11:00', clock_out: '19:00', tips: null }, 'Track'],
+    // An explicit venue outranks everything, in both directions.
+    ['susans 9am-2pm',
+      { venue: 'susans', clock_in: '09:00', clock_out: '14:00', tips: null }, 'Susans'],
+    ['track 2-8, 100 in tips',
+      { venue: 'track', clock_in: '14:00', clock_out: '20:00', tips: 100 }, 'Track'],
+    // Tips outrank an afternoon clock-in: Susans is flat hourly, never tipped.
+    ['2-8, 100 in tips',
+      { venue: null, clock_in: '14:00', clock_out: '20:00', tips: 100 }, 'Track'],
+    // Nothing to go on → Track, the historical default.
+    ['worked 6 hours',
+      { venue: null, clock_in: null, clock_out: null, tips: null }, 'Track']
+  ];
+  for (const [entry, data, expected] of ROUTING_CASES) {
+    test('routeTip: "' + entry + '" → ' + expected, () => {
+      assertEq(routeTip(data), expected);
+    });
+  }
+  test('routeTip: tolerates missing/garbage input without throwing', () => {
+    assertEq(routeTip(), 'Track', 'undefined');
+    assertEq(routeTip({}), 'Track', 'empty object');
+    assertEq(routeTip({ venue: 'SUSANS' }), 'Susans', 'venue is case-insensitive');
+    assertEq(routeTip({ venue: 'null' }), 'Track', 'the literal string "null" is not a venue');
+    assertEq(routeTip({ tips: 0 }), 'Track', 'zero tips is not a tips signal');
+    assertEq(routeTip({ tips: 'abc', clock_in: '14:00' }), 'Susans', 'unparseable tips ignored');
+    assertEq(routeTip({ clock_in: 'half past nine' }), 'Track', 'unparseable time falls to default');
+  });
+  test('routeTip: venue survives the spellings the model actually emits', () => {
+    // Track wins on tips alone, so pair each with an afternoon clock-in that
+    // would otherwise say Susans — this asserts the venue is what decided it.
+    for (const v of ['susans', "Susan's", 'susan', 'sue', 'Susans '])
+      assertEq(routeTip({ venue: v, clock_in: '09:00' }), 'Susans', 'venue ' + JSON.stringify(v));
+    for (const v of ['track', 'the track', 'valet', 'Valet'])
+      assertEq(routeTip({ venue: v, clock_in: '14:00' }), 'Track', 'venue ' + JSON.stringify(v));
+  });
+  test('routeTip: noon is the boundary — 11:59 Track, 12:00 Susans', () => {
+    assertEq(routeTip({ clock_in: '11:59' }), 'Track');
+    assertEq(routeTip({ clock_in: '12:00' }), 'Susans');
+  });
+
+  test('shiftHours: computed from the clock times, not the model', () => {
+    assertEq(shiftHours('09:18', '18:50', 99), 9.53, 'the reported failure, 99 must be ignored');
+    assertEq(shiftHours('14:00', '16:00', null), 2);
+  });
+  test('shiftHours: wraps past midnight instead of going negative', () => {
+    assertEq(shiftHours('22:00', '02:00', null), 4);
+  });
+  test('shiftHours: falls back to reported hours when times are absent', () => {
+    assertEq(shiftHours(null, null, 6), 6);
+    assertEq(shiftHours('09:00', null, 6), 6, 'one time alone is not enough');
+    assertEq(shiftHours(null, null, null), 0, 'nothing at all → 0');
+    assertEq(shiftHours(null, null, -3), 0, 'negative hours rejected');
+  });
+
+  test('to12h: renders the format the Susans columns already hold', () => {
+    assertEq(to12h('18:50'), '6:50pm');
+    assertEq(to12h('09:18'), '9:18am');
+    assertEq(to12h('12:00'), '12:00pm', 'noon is pm');
+    assertEq(to12h('00:30'), '12:30am', 'midnight is 12am');
+    assertEq(to12h(null), '', 'missing time renders empty, never "NaN:NaN"');
+    assertEq(to12h('nonsense'), '');
+  });
+
   runTests();
 }

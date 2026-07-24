@@ -41,15 +41,25 @@ index.html (PWA, GitHub Pages)
   ← confirmation card
 ```
 
-Four files carry the whole system: `index.html` (~1150 lines, app + styles + logic, no framework),
+Five files carry the whole system: `index.html` (~1150 lines, app + styles + logic, no framework),
 `daily.js` (the daily line's content list + pure selectors — production, loaded on every page view),
-`tests.js` (harness, injected only under `?test=1`), and `server/routerWebApp.gs` (the router).
+`tests.js` (harness, injected only under `?test=1`), `server/routerWebApp.gs` (the router), and
+`server/tipRouting.js` (pure tip-tab routing; pasted into Apps Script as a second file,
+`tipRouting.gs`, and pulled into the browser only under `?test=1` so it can be tested).
 
 ### Invariants — these are load-bearing, don't undo them
 
 - **Server worst case (~5-9s) must stay under the client's 15s timeout.** That gap is the *only*
   reason client retries are duplicate-safe. Never add server-side retries or sleeps back into the
   `.gs` — that's the bug v4.2 fixed (up to 18 Gemini calls + duplicate rows).
+- **Tip tab routing is code, never the prompt.** Gemini returns *facts* for a tip entry
+  (`venue`, `clock_in`/`clock_out` as 24h `HH:MM`, `hours`, `tips`); `routeTip()` in
+  `server/tipRouting.js` picks Track vs Susans and `shiftHours()` derives the length. The old
+  prompt offered two tip schemas and only the Susans one had clock fields, so an entry phrased
+  as an in/out pair routed to Susans no matter what the written rules said — and since that
+  schema has no `tips` field, the tip amount was silently dropped and a bogus hours × $20 row
+  written. **Never give the model a per-tab output shape again.** Order: explicit venue →
+  tips (Track-only; Susans is flat $20/hr) → clock-in before noon → Track by default.
 - **Apps Script does not auto-sync.** `server/routerWebApp.gs` is the source of truth by convention
   only; the user's Apps Script editor is the actual runtime. After any server change, remind the
   user to paste it in and create a **new deployment** — nothing happens otherwise.
