@@ -1,10 +1,20 @@
 // ================================================================
-// Log It — Router Web App  (v4.2 — Aligned Retry Budgets + NaN Fix)
+// Log It — Router Web App  (v4.3 — Deterministic Tip Routing)
 // File:    routerWebApp.gs
 // Deploy:  Web App  |  Execute as: Me  |  Who has access: Anyone
 //
+// REQUIRES a second script file in this project: tipRouting.gs
+//          (paste from server/tipRouting.js in the repo)
+//
 // SETUP: Apps Script → Project Settings → Script Properties
 //        Add:  GEMINI_API_KEY = your key from aistudio.google.com
+//
+// v4.3 changes: tip tab routing moved out of the prompt and into tipRouting.gs.
+// Gemini now returns one tip shape carrying every field; routeTip() picks the
+// tab and shiftHours() derives the hours. The old two-schema prompt let the
+// entry's phrasing pick the tab — an in/out pair fit the Susans schema and
+// routed there even when every written rule said Track, silently dropping the
+// tip amount (Susans has no tips field) and writing a bogus hours × $20 row.
 //
 // v4.2 changes: removed per-model retry loop/sleep so server worst case
 // stays under the client's 15s timeout; fixed "+ +" NaN bug in SYSTEM_PROMPT.
@@ -41,17 +51,18 @@ var SYSTEM_PROMPT = 'You are a personal log entry parser. Extract structured dat
 + '- "grocery": need to buy/pick up, running out, grocery store items, out of something\n'
 + '- "idea":    idea, thought, concept, "what if", future plan, something to build or try\n'
 + '- "car":     oil change, repair, mileage, car maintenance, parts replaced, shop\n\n'
-+ 'TAB ROUTING FOR TIPS:\n'
-+ '- Route to "Susans" if: mentions "susan" (any spelling/typo), OR resolved clock-in is 12:00pm or later\n'
-+ '- Route to "Track"  if: mentions "track" or "valet" or "tips", OR clock-in is before 12:00pm, OR no time/name given\n'
-+ '- Ambiguous times without am/pm: 7 8 9 10 11 → AM  |  12 1 2 3 4 5 6 → PM\n'
-+ '- Examples: "2-4" = 2:00pm-4:00pm (Susans). "8-4" = 8:00am-4:00pm (Track). "11-7" = 11:00am-7:00pm (Track).\n\n'
++ 'TIME FORMAT: emit every time as 24-hour "HH:MM". Explicit am/pm is literal.\n'
++ '- Bare hours without am/pm: 7 8 9 10 11 → AM  |  12 1 2 3 4 5 6 → PM\n'
++ '- Examples: "9:18 in, 6:50 out" → clock_in "09:18", clock_out "18:50".\n'
++ '  "2-4" → "14:00"/"16:00". "8-4" → "08:00"/"16:00". "11-7" → "11:00"/"19:00".\n\n'
++ 'TIP VENUE: set "venue" ONLY when the text explicitly names one — susan/sue/susans\n'
++ '(any spelling) → "susans"; track/valet → "track". Otherwise null. Never infer venue\n'
++ 'from times or tip amounts, and never choose the tab yourself — the server does that.\n\n'
 + 'TOLERANCE: Fix obvious typos (wokred→worked, susand→susans). Any variation of susan/sue/susans counts.\n\n'
 + 'GROCERY CATEGORIES: Fruits & Veg | Meat | Grains | Drinks | Household | Eggs & Milk | Other\n\n'
 + 'IDEA MATERIALS: If an idea entry also mentions needing to buy/get something for the project (e.g. "fix the shop vac, need a new hose"), extract materials too. If no purchases mentioned, omit the "materials" key entirely.\n\n'
 + 'Return EXACTLY one of these JSON structures matching the category:\n\n'
-+ 'TIP/TRACK:  {"category":"tip","sub_route":"Track","data":{"hours":<number>,"tips":<number|null>,"hourly_rate":<2dp|null>,"notes":"<string>"}}\n'
-+ 'TIP/SUSANS: {"category":"tip","sub_route":"Susans","data":{"clock_in":"<h:mma>","clock_out":"<h:mma>","hours":<number>,"notes":"<string>"}}\n'
++ 'TIP:        {"category":"tip","data":{"venue":"<susans|track|null>","clock_in":"<HH:MM|null>","clock_out":"<HH:MM|null>","hours":<number|null>,"tips":<number|null>,"notes":"<string>"}}\n'
 + 'MEAL:       {"category":"meal","sub_route":"Log","data":{"meal":"<Breakfast|Lunch|Dinner|Snack>","foods":"<comma-separated>","creatine":"<\u2713 or empty>","fish_oil":"<\u2713 or empty>","mct":"<\u2713 or empty>","multivitamin":"<\u2713 or empty>","notes":"<string>"}}\n'
 + 'GROCERY:    {"category":"grocery","sub_route":"Grocery List","data":{"items":[{"item":"<name>","category":"<Fruits & Veg|Meat|Grains|Drinks|Household|Eggs & Milk|Other>"}]}}\n'
 + 'IDEA:       {"category":"idea","sub_route":"Ideas","data":{"title":"<5-7 words>","category":"<Business|Money|Creative|Personal|Random>","effort":"<Quick Win|Medium Project|Big Swing>","excitement":<1-5>,"next_step":"<string>","tags":"<comma-separated>","materials":[{"item":"<thing to buy>","category":"<Hardware|Tools|Supplies|Parts|Other>"}]}}\n'
@@ -86,7 +97,12 @@ function doPost(e) {
     var message = '';
 
     switch (category) {
-      case 'tip':     message = handleTip(ss, sub_route, data);  break;
+      // The tab is decided here, not by Gemini — see tipRouting.gs. Overwrite
+      // sub_route so the client's confirmation card shows where it actually went.
+      case 'tip':
+        sub_route = routeTip(data);
+        message   = handleTip(ss, sub_route, data);
+        break;
       case 'meal':    message = handleMeal(ss, data);            break;
       case 'grocery': message = handleGrocery(ss, data);         break;
       case 'idea':    message = handleIdea(ss, data);            break;
@@ -211,7 +227,9 @@ function getTab(ss, name) {
 // ================================================================
 function handleTip(ss, sub_route, data) {
   var ts   = now();
-  var hrs  = parseFloat(data.hours) || 0;
+  // Derived from the clock times when we have them — Gemini's own arithmetic
+  // is only a fallback for entries that state hours and no times.
+  var hrs  = shiftHours(data.clock_in, data.clock_out, data.hours);
 
   if (sub_route === 'Track') {
     // Deduct 0.5 hours exclusively for Track shifts
@@ -226,10 +244,13 @@ function handleTip(ss, sub_route, data) {
     if (rate) msg += ' (' + rate + '/hr)';
     return msg;
   } else {
-    // Susans or other routes: Calculate pay on raw hours
+    // Susans: flat hourly, no break deduction, no tips. Times are stored as
+    // h:mma to match what the columns already hold.
     var pay = '$' + (hrs * SUSAN_HOURLY_RATE).toFixed(2);
-    getTab(ss, 'Susans').appendRow([ts, data.clock_in || '', data.clock_out || '', hrs, pay, data.notes || '']);
-    return 'Susans logged — ' + (data.clock_in || '?') + ' to ' + (data.clock_out || '?') + ', ' + pay + ' pay';
+    var inStr  = to12h(data.clock_in);
+    var outStr = to12h(data.clock_out);
+    getTab(ss, 'Susans').appendRow([ts, inStr, outStr, hrs, pay, data.notes || '']);
+    return 'Susans logged — ' + (inStr || '?') + ' to ' + (outStr || '?') + ', ' + pay + ' pay';
   }
 }
 

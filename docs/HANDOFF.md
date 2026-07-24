@@ -77,7 +77,7 @@ PWA (index.html, GitHub Pages)
 ## Testing (browser-only, no CLI runner)
 
 - In-page harness: serve repo (`python3 -m http.server 8777`) and open
-  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 72 passed, 0
+  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 90 passed, 0
   failed.** Any change must keep it green; new features add tests there.
   Tests live in `tests.js`; `index.html` injects it only when `?test=1` is
   set, so production never fetches it. The harness reads production globals
@@ -142,6 +142,20 @@ PWA (index.html, GitHub Pages)
 12. Today-view fan animation (see the Today view notes above). Index-driven
     stagger replaced the `nth-child` delays, which also fixed the fan
     flattening after the 3rd log. Live.
+13. **Deterministic tip routing** (`server/tipRouting.js`, router v4.3). Three
+    real logs of "9:18 in, 6:50 out, 350 dollars in tips" landed in Susans;
+    the same entry with "$350" landed in Track. Cause: the prompt gave Gemini
+    two tip schemas and only the Susans one had `clock_in`/`clock_out`, so an
+    in/out pair fit that shape and routed there regardless of the written
+    rules — and with no `tips` field on that schema, the $350 was silently
+    dropped and an hours x $20 payroll row invented. Fix: one tip schema
+    carrying every field, Gemini emits facts only (24h `HH:MM` times, plus
+    `venue` only when a name is spoken), and `routeTip()` picks the tab in
+    code — explicit venue, then tips (Track-only), then clock-in before noon,
+    else Track. `shiftHours()` also derives the length from the times instead
+    of trusting the model's arithmetic. 18 new tests; verified red against the
+    old behavior before going green. **Needs the user to paste `tipRouting.gs`
+    into Apps Script and cut a new deployment.**
 
 ## Key facts (don't re-litigate)
 
@@ -156,7 +170,18 @@ PWA (index.html, GitHub Pages)
   schema drift: old Food Log wrote E=Calories/F=Macros; router writes
   E=creatine/F=fish_oil — user hasn't confirmed sheet headers.
 - End-to-end validation the user can run: log "worked 2-4 at susans" → should
-  route Susans 2:00pm-4:00pm, $40 (proves NaN fix live).
+  route Susans 2:00pm-4:00pm, $40 (proves NaN fix live). For tip routing, log
+  "9:18 in, 6:50 out, 350 dollars in tips" → Track, 9.03h, $350, $38.76/hr.
+- Susans tab layout confirmed by the user: `A:Timestamp | B:Clock In |
+  C:Clock Out | D:Hours | E:Pay @ $20/hr | F:Notes` — matches what the router
+  writes. **Track tab layout is still unverified**; the router writes
+  `[ts, hours, tips, rate, notes]` with no Date column, while the legacy
+  script's header comment claims `A:Timestamp | B:Date | C:Hours | D:Tips |
+  E:Hourly Rate | F:Notes`. Worth one glance at the sheet.
+- The 0.5h Track break deduction is pure script (`BREAK_DEDUCTION_HRS`), not
+  AI, and the prompt says nothing about breaks — so there is no double
+  deduction. The legacy script's "only if over 5 hours" rule is gone; the
+  user chose to keep the unconditional deduction.
 
 ## Next steps (prioritized)
 
