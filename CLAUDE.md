@@ -104,8 +104,10 @@ Voice capture is **press-and-hold** (`pointerdown`/`up`/`leave`/`cancel`) with
 
 ### Categories
 
-tip (Track|Susans tabs), meal (Log + Daily Summary), grocery (Raw Log + categorized List),
-idea (Ideas + Materials), car (Maintenance Log).
+tip (Track|Susans tabs), meal (Log + Daily Summary), idea (Ideas + Materials),
+car (Maintenance Log). Grocery was retired in router v4.4 (moved to a dedicated app) —
+no routing guardrail replaced it, so a grocery-ish entry now lands in the nearest
+remaining category by design.
 
 ## Conventions
 

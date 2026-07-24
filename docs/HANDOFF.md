@@ -69,8 +69,10 @@ PWA (index.html, GitHub Pages)
   **All manifest paths must stay relative**: `start_url`/`scope` have to resolve
   to the `/log-it/` Pages subpath, not the domain root. A test guards this.
 - **Categories/sheets:** tip (Track|Susans tabs), meal (Log + Daily Summary),
-  grocery (Raw Log + categorized Grocery List), idea (Ideas + Materials),
-  car (Maintenance Log). Sheet IDs and the Web App URL are **baked into
+  idea (Ideas + Materials), car (Maintenance Log). Grocery retired in router
+  v4.4 (moved to its own app); no routing guardrail replaced it, so a
+  grocery-ish entry now goes to the nearest remaining category by design.
+  Sheet IDs and the Web App URL are **baked into
   `CFG_DEFAULTS` in `index.html`**; the ⚙ settings panel (localStorage) still
   overrides them per-field, and `LS.get` falls back to the default when a key
   is unset — so a cache clear no longer means retyping six fields on a phone.

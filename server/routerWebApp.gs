@@ -1,5 +1,5 @@
 // ================================================================
-// Log It — Router Web App  (v4.3 — Deterministic Tip Routing)
+// Log It — Router Web App  (v4.4 — Grocery Removed)
 // File:    routerWebApp.gs
 // Deploy:  Web App  |  Execute as: Me  |  Who has access: Anyone
 //
@@ -8,6 +8,12 @@
 //
 // SETUP: Apps Script → Project Settings → Script Properties
 //        Add:  GEMINI_API_KEY = your key from aistudio.google.com
+//
+// v4.4 changes: grocery category retired — the user moved groceries to a
+// dedicated app. Dropped the category, its schema, handleGrocery/
+// insertGroceryItem, and the grocery SHEET_IDS slot. No routing guardrail was
+// added, so a grocery-ish entry ("out of milk") now gets classified into
+// whatever remaining category the model finds closest, by deliberate choice.
 //
 // v4.3 changes: tip tab routing moved out of the prompt and into tipRouting.gs.
 // Gemini now returns one tip shape carrying every field; routeTip() picks the
@@ -38,7 +44,6 @@ var BREAK_DEDUCTION_HRS = 0.5;
 var SHEET_IDS = {
   tip:     'YOUR_TIPS_SHEET_ID',
   meal:    'YOUR_MEALS_SHEET_ID',
-  grocery: 'YOUR_GROCERY_SHEET_ID',
   idea:    'YOUR_IDEAS_SHEET_ID',
   car:     'YOUR_CAR_SHEET_ID'
 };
@@ -50,7 +55,6 @@ var SYSTEM_PROMPT = 'You are a personal log entry parser. Extract structured dat
 + 'CATEGORY CLASSIFICATION:\n'
 + '- "tip":     shift work, hours worked, tips made, track / valet work, susan\'s, clock in/out\n'
 + '- "meal":    eating, food items, meal types, supplements (creatine, fish oil, MCT, multivitamin)\n'
-+ '- "grocery": need to buy/pick up, running out, grocery store items, out of something\n'
 + '- "idea":    idea, thought, concept, "what if", future plan, something to build or try\n'
 + '- "car":     oil change, repair, mileage, car maintenance, parts replaced, shop\n\n'
 + 'TIME FORMAT: emit every time as 24-hour "HH:MM". Explicit am/pm is literal.\n'
@@ -61,12 +65,10 @@ var SYSTEM_PROMPT = 'You are a personal log entry parser. Extract structured dat
 + '(any spelling) → "susans"; track/valet → "track". Otherwise null. Never infer venue\n'
 + 'from times or tip amounts, and never choose the tab yourself — the server does that.\n\n'
 + 'TOLERANCE: Fix obvious typos (wokred→worked, susand→susans). Any variation of susan/sue/susans counts.\n\n'
-+ 'GROCERY CATEGORIES: Fruits & Veg | Meat | Grains | Drinks | Household | Eggs & Milk | Other\n\n'
 + 'IDEA MATERIALS: If an idea entry also mentions needing to buy/get something for the project (e.g. "fix the shop vac, need a new hose"), extract materials too. If no purchases mentioned, omit the "materials" key entirely.\n\n'
 + 'Return EXACTLY one of these JSON structures matching the category:\n\n'
 + 'TIP:        {"category":"tip","data":{"venue":"<susans|track|null>","clock_in":"<HH:MM|null>","clock_out":"<HH:MM|null>","hours":<number|null>,"tips":<number|null>,"notes":"<string>"}}\n'
 + 'MEAL:       {"category":"meal","sub_route":"Log","data":{"meal":"<Breakfast|Lunch|Dinner|Snack>","foods":"<comma-separated>","creatine":"<\u2713 or empty>","fish_oil":"<\u2713 or empty>","mct":"<\u2713 or empty>","multivitamin":"<\u2713 or empty>","notes":"<string>"}}\n'
-+ 'GROCERY:    {"category":"grocery","sub_route":"Grocery List","data":{"items":[{"item":"<name>","category":"<Fruits & Veg|Meat|Grains|Drinks|Household|Eggs & Milk|Other>"}]}}\n'
 + 'IDEA:       {"category":"idea","sub_route":"Ideas","data":{"title":"<5-7 words>","category":"<Business|Money|Creative|Personal|Random>","effort":"<Quick Win|Medium Project|Big Swing>","excitement":<1-5>,"next_step":"<string>","tags":"<comma-separated>","materials":[{"item":"<thing to buy>","category":"<Hardware|Tools|Supplies|Parts|Other>"}]}}\n'
 + 'CAR:        {"category":"car","sub_route":"Maintenance Log","data":{"type":"<Oil Change|Repair>","mileage":<number|null>,"description":"<string>","parts_replaced":"<string>","cost":<number|null>,"shop_diy":"<string>","notes":"<string>"}}\n\n'
 + 'Never invent missing data — use null or empty string.';
@@ -106,7 +108,6 @@ function doPost(e) {
         message   = handleTip(ss, sub_route, data);
         break;
       case 'meal':    message = handleMeal(ss, data);            break;
-      case 'grocery': message = handleGrocery(ss, data);         break;
       case 'idea':    message = handleIdea(ss, data);            break;
       case 'car':     message = handleCar(ss, data);             break;
       default: throw new Error('Unknown category: ' + category);
@@ -367,87 +368,6 @@ function updateDailySummary(ss, ts) {
   } else {
     sumTab.appendRow(newRow);
   }
-}
-
-// ================================================================
-// GROCERY HANDLER — with category grouping
-// ================================================================
-var GROCERY_CATEGORY_ORDER = [
-  'Fruits & Veg',
-  'Meat',
-  'Grains',
-  'Drinks',
-  'Household',
-  'Eggs & Milk',
-  'Other'
-];
-
-function handleGrocery(ss, data) {
-  var rawTab  = getTab(ss, 'Raw Log');
-  var listTab = getTab(ss, 'Grocery List');
-  var ts      = now();
-  var date    = dateFmt(ts);
-
-  var items = data.items;
-  if (!Array.isArray(items)) {
-    var str = String(items || data.item || '').trim();
-    items = str ? [{ item: str, category: 'Other' }] : [];
-  }
-  if (items.length === 0) throw new Error('No grocery items found');
-
-  var names = items.map(function(i) { return i.item; }).join(', ');
-
-  rawTab.appendRow([ts, names, '✓']);
-
-  items.forEach(function(item) {
-    var cat = item.category || 'Other';
-    insertGroceryItem(listTab, item.item || '', cat, date);
-  });
-
-  return 'Added: ' + names;
-}
-
-function insertGroceryItem(listTab, itemName, category, date) {
-  var allRows = listTab.getDataRange().getValues();
-
-  if (allRows.length <= 1) {
-    listTab.appendRow([itemName, category, date, '']);
-    return;
-  }
-
-  var firstRowOfCategory = -1;
-  var lastRowOfCategory  = -1;
-
-  for (var i = 1; i < allRows.length; i++) {
-    if (allRows[i][1] === category) {
-      if (firstRowOfCategory === -1) firstRowOfCategory = i;
-      lastRowOfCategory = i;
-    }
-  }
-
-  if (firstRowOfCategory !== -1) {
-    listTab.insertRows(lastRowOfCategory + 2, 1);
-    listTab.getRange(lastRowOfCategory + 2, 1, 1, 4).setValues([[itemName, category, date, '']]);
-    return;
-  }
-
-  var insertRow = allRows.length + 1;
-  var categoryIndex = GROCERY_CATEGORY_ORDER.indexOf(category);
-  if (categoryIndex === -1) categoryIndex = GROCERY_CATEGORY_ORDER.length - 1;
-
-  for (var targetCatIdx = categoryIndex + 1; targetCatIdx < GROCERY_CATEGORY_ORDER.length; targetCatIdx++) {
-    var targetCat = GROCERY_CATEGORY_ORDER[targetCatIdx];
-    for (var i = 1; i < allRows.length; i++) {
-      if (allRows[i][1] === targetCat) {
-        insertRow = i + 1;
-        break;
-      }
-    }
-    if (insertRow < allRows.length + 1) break;
-  }
-
-  listTab.insertRows(insertRow, 1);
-  listTab.getRange(insertRow, 1, 1, 4).setValues([[itemName, category, date, '']]);
 }
 
 // ================================================================
