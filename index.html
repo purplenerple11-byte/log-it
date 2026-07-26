@@ -1205,10 +1205,10 @@ function nextBackoffMs(completedAttempts) {
 // DEV TEST HARNESS  (active only with ?test=1 — see tests.js)
 // ================================================================
 if (new URLSearchParams(location.search).get('test') === '1') {
-  // tipRouting.js is server logic (Apps Script), pulled in only so the harness
-  // can test it — production must never load it. async=false keeps the two in
-  // order; dynamically inserted scripts are async by default.
-  for (const src of ['server/tipRouting.js', 'tests.js']) {
+  // tipRouting.js and trackPay.js are server logic (Apps Script), pulled in only
+  // so the harness can test them — production must never load them. async=false
+  // keeps them in order; dynamically inserted scripts are async by default.
+  for (const src of ['server/tipRouting.js', 'server/trackPay.js', 'tests.js']) {
     const s = document.createElement('script');
     s.src = src;      // relative: must resolve under the /log-it/ subpath
     s.async = false;

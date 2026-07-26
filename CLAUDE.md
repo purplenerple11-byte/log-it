@@ -41,11 +41,12 @@ index.html (PWA, GitHub Pages)
   ← confirmation card
 ```
 
-Five files carry the whole system: `index.html` (~1150 lines, app + styles + logic, no framework),
+Six files carry the whole system: `index.html` (~1150 lines, app + styles + logic, no framework),
 `daily.js` (the daily line's content list + pure selectors — production, loaded on every page view),
-`tests.js` (harness, injected only under `?test=1`), `server/routerWebApp.gs` (the router), and
-`server/tipRouting.js` (pure tip-tab routing; pasted into Apps Script as a second file,
-`tipRouting.gs`, and pulled into the browser only under `?test=1` so it can be tested).
+`tests.js` (harness, injected only under `?test=1`), `server/routerWebApp.gs` (the router), and two
+pure server modules pasted into Apps Script as additional files and pulled into the browser only
+under `?test=1` so they can be tested: `server/tipRouting.js` (→ `tipRouting.gs`, tip-tab routing)
+and `server/trackPay.js` (→ `trackPay.gs`, Track wage + withholding).
 
 ### Invariants — these are load-bearing, don't undo them
 
@@ -60,6 +61,23 @@ Five files carry the whole system: `index.html` (~1150 lines, app + styles + log
   schema has no `tips` field, the tip amount was silently dropped and a bogus hours × $20 row
   written. **Never give the model a per-tab output shape again.** Order: explicit venue →
   tips (Track-only; Susans is flat $20/hr) → clock-in before noon → Track by default.
+- **Track pay is calibrated, not derived — and a shift is taxed by its week.** The withholding
+  model in `server/trackPay.js` was reverse-engineered from two real paystubs (weeks ending
+  7/5 and 7/19/2026) and reproduces both to the penny; `tests.js` locks that in. FICA/Medicare/
+  NY-PFL are flat rates, NY disability is **$0.60 flat per week** (not a rate), and federal is
+  the real 2026 percentage method (Single, step-2 unchecked, $16,100 standard deduction). **NY
+  State is a line fitted to two points** because NY's actual withholding tables are piecewise —
+  the published brackets miss by $0.22-$0.35/week. Re-fit against a fresh stub after any raise,
+  filing-status change, or new tax year; `TRACK_WAGE_RATE` also needs editing on a raise.
+  Withholding is progressive and assessed weekly, so a shift's net is its **incremental**
+  contribution to the Mon-Sun pay week — which means `handleTip` must sum the week's existing
+  Track hours **before** appending the new row, or the shift counts itself. Taxing a shift in
+  isolation understates withholding by ~$20/shift; a test guards against collapsing to that.
+  Track columns are `A-E` as before plus `F Gross Wage | G Est. Net Wage | H Total Take-Home |
+  I Eff. $/hr`. It's an estimate for planning, not a tax document.
+- **Source-inspecting tests must fetch through `fetchText`/`fetchJson`.** They append a
+  per-run cache-buster. Without it the browser serves a cached copy and the test silently
+  validates the *previous* version of the file — it once reported the v4.5 router as v4.4.
 - **Apps Script does not auto-sync.** `server/routerWebApp.gs` is the source of truth by convention
   only; the user's Apps Script editor is the actual runtime. After any server change, remind the
   user to paste it in and publish — nothing happens otherwise. Publishing means **Deploy →

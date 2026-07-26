@@ -16,9 +16,10 @@ capital M).
 PWA (index.html, GitHub Pages)
   → fetch POST text/plain (avoids CORS preflight)
     → Google Apps Script Web App  ("Execute as: Me", access: Anyone)
-       source of truth in repo: server/routerWebApp.gs (v4.3) +
-         server/tipRouting.js (pasted alongside it as a 2nd file in the
-         same Apps Script project — same project, NOT a separate one)
+       source of truth in repo: server/routerWebApp.gs (v4.5) +
+         server/tipRouting.js + server/trackPay.js (pasted alongside it as
+         additional files in the SAME Apps Script project — same project,
+         NOT separate ones; Apps Script shares one global scope per project)
        ⚠ Apps Script does NOT auto-sync: after editing those files, the user
          must paste them in and publish via Deploy → Manage deployments →
          pencil → Version: New version. NOT "New deployment" — that mints a
@@ -84,7 +85,7 @@ PWA (index.html, GitHub Pages)
 ## Testing (browser-only, no CLI runner)
 
 - In-page harness: serve repo (`python3 -m http.server 8777`) and open
-  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 90 passed, 0
+  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 112 passed, 0
   failed.** Any change must keep it green; new features add tests there.
   Tests live in `tests.js`; `index.html` injects it only when `?test=1` is
   set, so production never fetches it. The harness reads production globals
@@ -164,6 +165,26 @@ PWA (index.html, GitHub Pages)
     old behavior before going green. **Shipped and confirmed live by the user**
     on 2026-07-23, after pasting both files into the Log It - Router project
     and publishing a new version of the existing deployment.
+14. **Grocery retired** (router v4.4). Groceries moved to a dedicated app, so
+    the category came out end to end: prompt line, schema, doPost case,
+    SHEET_IDS slot, handleGrocery/insertGroceryItem (~80 lines), plus the
+    client's ⚙ field, sheet_grocery default, payload key, and 🛒 CAT_UI entry.
+    A guard test keeps it from creeping back. Stale grocery rows in a Today
+    list degrade to a bullet via the existing CAT_UI fallback. **No routing
+    guardrail replaced it by the user's choice** — "out of milk" now lands in
+    the nearest remaining category. The orphaned grocery Sheet was left alone.
+15. **Track pay & withholding** (`server/trackPay.js`, router v4.5). Track rows
+    now carry Gross Wage, Est. Net Wage, Total Take-Home, and a true Eff. $/hr
+    in columns F-I (previously "Rate" was only tips÷hours, saying nothing about
+    the paycheck). Model reverse-engineered from two real paystubs — see the
+    Track pay model section below. 22 new tests. Two findings worth keeping:
+    the naive additivity test **telescopes and is nearly tautological**, so it
+    was backed up with a ragged-12-shift drift test and an explicit
+    "not taxed in isolation" test that both genuinely fail against wrong
+    models; and the harness's source-inspecting tests were reading **cached**
+    .gs files (it reported the v4.5 router as v4.4), now fixed with a per-run
+    cache-buster in `fetchText`/`fetchJson`. **Needs the user to add F-I
+    headers to the Track tab, paste `trackPay.gs`, and republish.**
 
 ## Key facts (don't re-litigate)
 
@@ -182,10 +203,12 @@ PWA (index.html, GitHub Pages)
   "9:18 in, 6:50 out, 350 dollars in tips" → Track, 9.03h, $350, $38.76/hr.
 - Susans tab layout confirmed by the user: `A:Timestamp | B:Clock In |
   C:Clock Out | D:Hours | E:Pay @ $20/hr | F:Notes` — matches what the router
-  writes. **Track tab layout is still unverified**; the router writes
-  `[ts, hours, tips, rate, notes]` with no Date column, while the legacy
-  script's header comment claims `A:Timestamp | B:Date | C:Hours | D:Tips |
-  E:Hourly Rate | F:Notes`. Worth one glance at the sheet.
+  writes. **Track tab** is `A:Timestamp | B:Hours | C:Tips | D:Tips-per-hr |
+  E:Notes` plus, as of v4.5, `F:Gross Wage | G:Est. Net Wage |
+  H:Total Take-Home | I:Eff. $/hr` (the user must add those four headers).
+  The legacy script wrote a Date in column B, so if any of its rows survive,
+  reading hours from B would poison the weekly pay math — `sumTrackHours`
+  guards with a numeric check and a test proves it.
 - First request after publishing a new version can be slow or time out
   client-side while the Apps Script container warms up. Observed 2026-07-23:
   ~4 failed attempts, zero Gemini calls logged, zero rows written, then normal
@@ -198,6 +221,35 @@ PWA (index.html, GitHub Pages)
   AI, and the prompt says nothing about breaks — so there is no double
   deduction. The legacy script's "only if over 5 hours" rule is gone; the
   user chose to keep the unconditional deduction.
+
+## Track pay model (v4.5) — calibrated, re-fit when things change
+
+Reverse-engineered from two real paystubs (weeks ending 7/5 and 7/19/2026,
+weekly pay period, NY). Reproduces gross, every deduction, and net **to the
+penny on both**; tests.js locks it in.
+
+| Component | Rate |
+|---|---|
+| Gross | hours x `TRACK_WAGE_RATE` = $16.07 (hours already net of the unpaid 0.5h break) |
+| FICA / Medicare / NY-PFL | 6.2% / 1.45% / 0.4327% of gross |
+| NY Disability | **$0.60 flat per week**, not a rate |
+| Federal | real 2026 percentage method: Single, W-4 step 2 unchecked, $16,100 std deduction, 10% to $12,400 then 12% to $50,400, annualized /52 |
+| NY State | **line fitted to the two stubs**: `0.054045 x gross - 10.874`, floored at 0 |
+
+- **NY is calibration, not derivation.** NY's real tables are piecewise with the
+  tax-table benefit recapture built in; the published brackets miss by
+  $0.22-$0.35/week. Re-fit on a raise, filing-status change, or new tax year.
+- **A shift's net is incremental within the Mon-Sun pay week** (WeekEnd is a
+  Sunday, paid the following Thursday). Withholding is progressive, so taxing a
+  shift alone understates it ~$20/shift. Consequence: `handleTip` sums the
+  week's existing Track hours **before** appending, and the same hours net
+  *less* later in the week — that's correct, not a bug.
+- Rounding each deduction to cents (as the stubs do) is what makes the
+  per-shift nets sum exactly to the week; a drift test on 12 ragged shift
+  lengths catches losing that.
+- Tips are treated as untaxed cash — correct per the stubs, where gross is
+  exactly `units x rate` with no tip income.
+- **Estimate for planning, not a tax document.**
 
 ## Next steps (prioritized)
 
