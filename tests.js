@@ -12,6 +12,21 @@ function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed
 function assertEq(actual, expected, msg) {
   if (actual !== expected) throw new Error((msg ? msg + ': ' : '') + 'expected ' + expected + ' got ' + actual);
 }
+// Always read repo files fresh. Without this the browser happily serves a cached
+// copy and a source-inspecting test silently validates the PREVIOUS version of a
+// file — it reported the v4.5 router as still being v4.4. Every fetch of a repo
+// file in this harness must go through here.
+const CACHE_BUST = 'cb=' + Date.now() + '-' + Math.random().toString(36).slice(2);
+function bust(path) {
+  return path + (path.indexOf('?') === -1 ? '?' : '&') + CACHE_BUST;
+}
+function fetchText(path) {
+  return fetch(bust(path)).then((r) => r.text());
+}
+function fetchJson(path) {
+  return fetch(bust(path)).then((r) => r.json());
+}
+
 async function runTests() {
   // Hide the app but keep the DOM intact — integration tests manipulate real
   // elements (text-input, fail-card). Wiping the body would delete them.
@@ -297,22 +312,22 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(vals.join(','), '0,1,2,3,4', 'boxes should be indexed in order');
   });
   test('router: v4.2 source parses as valid JS', async () => {
-    const src = await (await fetch('server/routerWebApp.gs')).text();
+    const src = await fetchText('server/routerWebApp.gs');
     new Function(src); // parse check only — Google globals are only referenced at runtime
   });
   test('router: header bumped to v4.2', async () => {
-    const src = await (await fetch('server/routerWebApp.gs')).text();
+    const src = await fetchText('server/routerWebApp.gs');
     assert(src.indexOf('v4.2') !== -1, 'version bumped');
   });
   test('router: NaN "+ +" prompt bug fixed', async () => {
-    const src = await (await fetch('server/routerWebApp.gs')).text();
+    const src = await fetchText('server/routerWebApp.gs');
     // Guard the whole concat chain, not one line — a stray "+ +" anywhere in it
     // turns the prompt into NaN, which is how this shipped once already.
     assert(!/\+\s*\+\s*'/.test(src), 'stray "+ +" in the prompt concatenation');
     assert(/7 8 9 10 11 . AM/.test(src), 'am/pm disambiguation rule present');
   });
   test('router: the prompt extracts facts and never picks the tip tab', async () => {
-    const src = await (await fetch('server/routerWebApp.gs')).text();
+    const src = await fetchText('server/routerWebApp.gs');
     // The two-schema prompt is what let phrasing decide the tab. One shape now,
     // and routeTip() owns the decision — see server/tipRouting.js.
     assert(src.indexOf('"sub_route":"Susans"') === -1, 'Susans must not be a prompt-chosen sub_route');
@@ -321,13 +336,13 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(src.indexOf('shiftHours(data.clock_in') !== -1, 'handleTip must derive hours from the clock times');
   });
   test('router: no blocking Utilities.sleep', async () => {
-    const src = await (await fetch('server/routerWebApp.gs')).text();
+    const src = await fetchText('server/routerWebApp.gs');
     assert(src.indexOf('Utilities.sleep') === -1, 'no blocking sleeps');
   });
   test('router + client: grocery is fully retired', async () => {
     // Strip comments — the v4.4 header legitimately mentions grocery in prose;
     // what must be gone is executable grocery code and data.
-    const raw = await (await fetch('server/routerWebApp.gs')).text();
+    const raw = await fetchText('server/routerWebApp.gs');
     const code = raw.replace(/\/\/[^\n]*/g, '');
     assert(code.indexOf('handleGrocery') === -1, 'handleGrocery still defined/called');
     assert(code.indexOf("'grocery'") === -1, 'grocery category token still in code');
@@ -337,14 +352,14 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(document.getElementById('cfg-grocery') === null, 'grocery config field still in the DOM');
   });
   test('manifest: valid JSON with the required install fields', async () => {
-    const m = await (await fetch('manifest.json')).json();
+    const m = await fetchJson('manifest.json');
     assertEq(m.name, 'Log It');
     assertEq(m.short_name, 'Log It');
     assertEq(m.display, 'standalone');
     assert(Array.isArray(m.icons) && m.icons.length > 0, 'declares icons');
   });
   test('manifest: all paths relative (absolute would 404 on the /log-it/ subpath)', async () => {
-    const m = await (await fetch('manifest.json')).json();
+    const m = await fetchJson('manifest.json');
     for (const [k, v] of [['start_url', m.start_url], ['scope', m.scope], ['id', m.id]]) {
       assert(!v.startsWith('/'), k + ' must be relative, got ' + v);
     }
@@ -353,21 +368,21 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     }
   });
   test('manifest: colours match the app CSS variables', async () => {
-    const m = await (await fetch('manifest.json')).json();
+    const m = await fetchJson('manifest.json');
     const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
     assertEq(m.background_color, bg, 'background_color tracks --bg');
     assertEq(m.theme_color, bg, 'theme_color tracks --bg');
   });
   test('manifest: every declared icon actually resolves', async () => {
-    const m = await (await fetch('manifest.json')).json();
+    const m = await fetchJson('manifest.json');
     for (const i of m.icons) {
-      const r = await fetch(i.src, { method: 'HEAD' });
+      const r = await fetch(bust(i.src), { method: 'HEAD' });
       assert(r.ok, i.src + ' -> HTTP ' + r.status);
       assertEq(r.headers.get('content-type'), 'image/png', i.src + ' content-type');
     }
   });
   test('manifest: 192 and 512 icons are declared maskable', async () => {
-    const m = await (await fetch('manifest.json')).json();
+    const m = await fetchJson('manifest.json');
     for (const size of ['192x192', '512x512']) {
       const i = m.icons.find((x) => x.sizes === size);
       assert(i, 'declares a ' + size + ' icon');
@@ -382,7 +397,7 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   });
   test('apple-touch-icon: resolves at the 180px iOS size', async () => {
     const href = document.querySelector('link[rel="apple-touch-icon"]').getAttribute('href');
-    const r = await fetch(href, { method: 'HEAD' });
+    const r = await fetch(bust(href), { method: 'HEAD' });
     assert(r.ok, href + ' -> HTTP ' + r.status);
   });
   test('setMode(text): adds text-mode class + status "Type to log"', () => {
@@ -595,6 +610,195 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(to12h('00:30'), '12:30am', 'midnight is 12am');
     assertEq(to12h(null), '', 'missing time renders empty, never "NaN:NaN"');
     assertEq(to12h('nonsense'), '');
+  });
+
+  // ---- TRACK PAY / WITHHOLDING (server/trackPay.js) ----
+  // The two real paystubs ARE the specification. If a refactor of the tax math
+  // breaks, these are the tests that catch it.
+  const STUBS = [
+    { label: 'week ending 7/19/2026', hours: 35.50, gross: 570.49,
+      fica: 35.37, medicare: 8.27, federal: 26.54, sdi: 0.60, pfl: 2.47, nyState: 19.96,
+      total: 93.21, net: 477.28 },
+    { label: 'week ending 7/5/2026',  hours: 26.75, gross: 429.87,
+      fica: 26.65, medicare: 6.23, federal: 12.03, sdi: 0.60, pfl: 1.86, nyState: 12.36,
+      total: 59.73, net: 370.14 }
+  ];
+  for (const s of STUBS) {
+    test('trackPay: reproduces the real paystub, ' + s.label, () => {
+      assertEq(round2(s.hours * TRACK_WAGE_RATE), s.gross, 'gross');
+      const d = weeklyDeductions(s.gross);
+      assertEq(d.fica, s.fica, 'FICA');
+      assertEq(d.medicare, s.medicare, 'Medicare');
+      assertEq(d.pfl, s.pfl, 'NY Paid Family Leave');
+      assertEq(d.sdi, s.sdi, 'NY Disability');
+      assertEq(d.federal, s.federal, 'federal withholding');
+      assertEq(d.nyState, s.nyState, 'NY State withholding');
+      assertEq(d.total, s.total, 'total deductions');
+      assertEq(weeklyNet(s.gross), s.net, 'net earnings');
+    });
+  }
+
+  // However the week is split into shifts, the per-shift nets must sum to the
+  // real check. NOTE: this sum telescopes by construction — net(after)-net(before)
+  // chains to net(total)-net(0) — so these cases are weak on their own. What they
+  // genuinely pin is that weeklyNet(0) is 0 and that the week's total matches the
+  // stub. The drift and isolation tests below are the ones with teeth.
+  const SPLITS = [
+    ['35.5h as 4 shifts',      [9, 9, 9, 8.5],           477.28],
+    ['35.5h as 1 shift',       [35.5],                   477.28],
+    ['35.5h as 7 short ones',  [5, 5, 5, 5, 5, 5, 5.5],  477.28],
+    ['26.75h as 3 shifts',     [9, 9, 8.75],             370.14]
+  ];
+  for (const [label, shifts, expected] of SPLITS) {
+    test('trackPay: per-shift nets sum to the paycheck — ' + label, () => {
+      let prior = 0, sum = 0;
+      for (const h of shifts) {
+        sum = round2(sum + shiftPay(prior, h, 0).netWage);
+        prior = round2(prior + h);
+      }
+      assertEq(sum, expected);
+    });
+  }
+
+  test('trackPay: no rounding drift across many awkward shift lengths', () => {
+    // Twelve shifts on ragged fractions — the case that actually catches drift.
+    // Verified to fail (off by $0.01) if weeklyDeductions stops rounding each
+    // deduction to cents the way the stubs do.
+    const shifts = [1.33, 2.17, 3.41, 0.92, 4.08, 1.76, 2.83, 3.19, 5.07, 2.44, 3.66, 4.14];
+    let prior = 0, sum = 0;
+    for (const h of shifts) {
+      sum = round2(sum + shiftPay(prior, h, 0).netWage);
+      prior = round2(prior + h);
+    }
+    assertEq(prior, 35, 'fixture should total 35h');
+    assertEq(sum, weeklyNet(round2(35 * TRACK_WAGE_RATE)), 'split must equal the direct week');
+  });
+
+  test('trackPay: a shift is taxed as part of its week, NOT in isolation', () => {
+    // The core of the design. Taxing an 8h shift on its own annualizes to below
+    // the standard deduction and withholds almost nothing; inside a 35h week the
+    // same hours sit in the 12% bracket. Collapsing to the isolated calculation
+    // is the ~$20/shift bug this whole module exists to avoid.
+    const inWeek = shiftPay(27, 8, 0).netWage;
+    const alone  = weeklyNet(round2(8 * TRACK_WAGE_RATE));
+    assert(inWeek < alone - 10,
+      'an 8h shift 27h into the week should net far less than taxed alone; got '
+      + inWeek + ' vs ' + alone);
+  });
+
+  test('trackPay: later shifts in a week net less — progressive withholding is live', () => {
+    const first  = shiftPay(0, 9, 0).netWage;
+    const fourth = shiftPay(27, 9, 0).netWage;
+    assert(fourth < first, 'same 9h should net less once the week is 27h deep, got '
+      + fourth + ' vs ' + first);
+    // A flat-rate model would make these identical; this is the guard against
+    // silently regressing to one.
+    assert(first - fourth > 5, 'gap too small to be real progression: ' + (first - fourth));
+  });
+
+  test('trackPay: tips are added untaxed and drive the effective hourly', () => {
+    const p = shiftPay(0, 9.03, 350);
+    assertEq(p.grossWage, round2(9.03 * TRACK_WAGE_RATE), 'gross wage');
+    assertEq(p.takeHome, round2(p.netWage + 350), 'take-home = net wage + tips');
+    assertEq(p.effectiveHourly, round2(p.takeHome / 9.03), 'effective hourly');
+    assert(p.effectiveHourly > TRACK_WAGE_RATE, 'a $350 tip day must beat the base rate');
+  });
+
+  test('trackPay: zero gross means zero deductions, not a negative net', () => {
+    const d = weeklyDeductions(0);
+    assertEq(d.total, 0, 'total');
+    assertEq(d.sdi, 0, 'the flat $0.60 SDI must not apply to a week with no pay');
+    assertEq(weeklyNet(0), 0, 'net');
+    assertEq(weeklyNet(-50), 0, 'negative gross');
+  });
+
+  test('trackPay: the first shift of the week carries the flat $0.60 SDI', () => {
+    assertEq(weeklyDeductions(100).sdi, 0.60);
+    // Charged once per week, not per shift: two 5h shifts and one 10h shift
+    // must land on the same net.
+    const split = round2(shiftPay(0, 5, 0).netWage + shiftPay(5, 5, 0).netWage);
+    assertEq(split, shiftPay(0, 10, 0).netWage, 'SDI double-charged across shifts');
+  });
+
+  test('trackPay: NY withholding floors at zero instead of going negative', () => {
+    assertEq(nyWeekly(50), 0, 'the fitted line is negative here');
+    assertEq(nyWeekly(0), 0);
+    assert(nyWeekly(570.49) > 0, 'still positive at real wages');
+  });
+
+  test('trackPay: degenerate input never yields NaN or Infinity', () => {
+    for (const p of [shiftPay(0, 0, 0), shiftPay(null, undefined, 'abc'),
+                     shiftPay(-5, -5, -5), shiftPay('x', 'y', 'z')]) {
+      for (const k of ['grossWage', 'netWage', 'takeHome', 'effectiveHourly']) {
+        assert(isFinite(p[k]), k + ' should be finite, got ' + p[k]);
+      }
+    }
+    assertEq(shiftPay(0, 0, 0).effectiveHourly, 0, 'zero hours must not divide by zero');
+  });
+
+  test('payWeekStart: the pay week runs Monday to Sunday', () => {
+    const mon = new Date(2026, 6, 13);            // Mon 7/13/2026
+    assertEq(payWeekStart(mon).getTime(), mon.getTime(), 'Monday maps to itself');
+    // The stubs' WeekEnd is a Sunday, so Sun 7/19 closes the week that began 7/13.
+    assertEq(payWeekStart(new Date(2026, 6, 19)).getTime(), mon.getTime(), 'Sunday 7/19');
+    assertEq(payWeekStart(new Date(2026, 6, 18)).getTime(), mon.getTime(), 'Saturday 7/18');
+    assertEq(payWeekStart(new Date(2026, 6, 20)).getTime(),
+      new Date(2026, 6, 20).getTime(), 'Monday 7/20 starts a new week');
+    assert(!samePayWeek(new Date(2026, 6, 19), new Date(2026, 6, 20)),
+      'Sun 7/19 and Mon 7/20 are different weeks');
+  });
+  test('payWeekStart: ignores the time of day', () => {
+    assertEq(payWeekStart(new Date(2026, 6, 15, 23, 59)).getTime(),
+             payWeekStart(new Date(2026, 6, 15, 0, 1)).getTime());
+  });
+
+  test('sumTrackHours: totals only this pay week, skipping the header row', () => {
+    const ts = new Date(2026, 6, 15, 12, 0);      // Wed 7/15/2026
+    const rows = [
+      ['Timestamp', 'Hours', 'Tips'],             // header — must be skipped
+      [new Date(2026, 6, 13, 9, 0), 9,    100],   // Mon, same week
+      [new Date(2026, 6, 14, 9, 0), 8.5,  ''],    // Tue, same week
+      [new Date(2026, 6, 20, 9, 0), 7,    ''],    // next week — excluded
+      [new Date(2026, 6, 12, 9, 0), 6,    '']     // previous week — excluded
+    ];
+    assertEq(sumTrackHours(rows, ts), 17.5);
+  });
+  test('sumTrackHours: ignores legacy rows whose hours column holds a Date', () => {
+    const ts = new Date(2026, 6, 15, 12, 0);
+    const rows = [
+      ['Timestamp', 'Hours'],
+      // The legacy Auto Tips script wrote Timestamp | Date | Hours — a Date in
+      // column B. Summing it blindly would corrupt every pay figure.
+      [new Date(2026, 6, 13, 9, 0), new Date(2026, 6, 13), 9],
+      [new Date(2026, 6, 14, 9, 0), 8.5]
+    ];
+    assertEq(sumTrackHours(rows, ts), 8.5, 'the Date row must contribute nothing');
+  });
+  test('sumTrackHours: survives junk rows and junk input', () => {
+    const ts = new Date(2026, 6, 15, 12, 0);
+    assertEq(sumTrackHours([['h'], [null], ['not a date', 5], [new Date(2026,6,14), 'abc'],
+                            [new Date(2026,6,14), ''], [new Date(2026,6,14), -3]], ts), 0);
+    assertEq(sumTrackHours(null, ts), 0);
+    assertEq(sumTrackHours([], ts), 0);
+    assertEq(sumTrackHours([['header only']], ts), 0);
+  });
+  test('sumTrackHours: string hours from a text-formatted cell still count', () => {
+    const ts = new Date(2026, 6, 15, 12, 0);
+    assertEq(sumTrackHours([['h'], [new Date(2026, 6, 14, 9, 0), '8.5']], ts), 8.5);
+  });
+
+  test('router: the Track branch reads the week BEFORE appending', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    // Order is load-bearing: append first and the new row counts itself, so the
+    // shift would be taxed as if the week already included it.
+    const readAt = src.indexOf('sumTrackHours');
+    const appendAt = src.indexOf("getTab(ss, 'Track').appendRow") >= 0
+      ? src.indexOf("getTab(ss, 'Track').appendRow")
+      : src.indexOf('trackTab.appendRow');
+    assert(readAt !== -1, 'router must sum the week via sumTrackHours');
+    assert(appendAt !== -1, 'router must still append the Track row');
+    assert(readAt < appendAt, 'the week must be summed before the row is appended');
+    assert(src.indexOf('shiftPay(') !== -1, 'router must call shiftPay');
   });
 
   runTests();

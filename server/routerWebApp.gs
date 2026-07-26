@@ -1,13 +1,22 @@
 // ================================================================
-// Log It — Router Web App  (v4.4 — Grocery Removed)
+// Log It — Router Web App  (v4.5 — Track Pay & Withholding)
 // File:    routerWebApp.gs
 // Deploy:  Web App  |  Execute as: Me  |  Who has access: Anyone
 //
-// REQUIRES a second script file in this project: tipRouting.gs
-//          (paste from server/tipRouting.js in the repo)
+// REQUIRES two more script files in this project:
+//          tipRouting.gs  (paste from server/tipRouting.js)
+//          trackPay.gs    (paste from server/trackPay.js)
 //
 // SETUP: Apps Script → Project Settings → Script Properties
 //        Add:  GEMINI_API_KEY = your key from aistudio.google.com
+//
+// v4.5 changes: Track rows now carry pay — columns F-I hold Gross Wage,
+// Est. Net Wage, Total Take-Home, and Eff. $/hr. The withholding model lives in
+// trackPay.gs and is CALIBRATED from two real stubs (weeks ending 7/5 and
+// 7/19/2026); it is an estimate for planning, not a tax document. Because
+// withholding is progressive and assessed weekly, a shift's net is its
+// incremental contribution to the Mon-Sun week, so handleTip sums the week's
+// existing Track hours BEFORE appending. Track tab needs headers in F-I.
 //
 // v4.4 changes: grocery category retired — the user moved groceries to a
 // dedicated app. Dropped the category, its schema, handleGrocery/
@@ -235,16 +244,27 @@ function handleTip(ss, sub_route, data) {
   var hrs  = shiftHours(data.clock_in, data.clock_out, data.hours);
 
   if (sub_route === 'Track') {
-    // Deduct 0.5 hours exclusively for Track shifts
+    // Deduct 0.5 hours exclusively for Track shifts (the break is unpaid)
     hrs = Math.max(0, hrs - BREAK_DEDUCTION_HRS);
 
     var tips = parseFloat(data.tips) || 0;
     var rate = (hrs > 0 && tips > 0) ? '$' + (tips / hrs).toFixed(2) : '';
-    getTab(ss, 'Track').appendRow([ts, hrs, tips > 0 ? tips : '', rate, data.notes || '']);
+
+    // Pay is computed against the whole Mon-Sun pay week, because withholding is
+    // progressive — see trackPay.gs. ORDER IS LOAD-BEARING: sum the week BEFORE
+    // appending, or the new row counts itself and the shift is taxed as though
+    // the week already included it.
+    var trackTab = getTab(ss, 'Track');
+    var prior    = sumTrackHours(trackTab.getDataRange().getValues(), ts);
+    var pay      = shiftPay(prior, hrs, tips);
+
+    trackTab.appendRow([ts, hrs, tips > 0 ? tips : '', rate, data.notes || '',
+                        pay.grossWage, pay.netWage, pay.takeHome, pay.effectiveHourly]);
 
     var msg = 'Track shift logged — ' + hrs + 'h';
-    if (tips) msg += ', $' + tips + ' in tips';
-    if (rate) msg += ' (' + rate + '/hr)';
+    if (tips) msg += ', $' + tips + ' tips';
+    msg += ' · take-home $' + pay.takeHome.toFixed(2)
+         + ' ($' + pay.effectiveHourly.toFixed(2) + '/hr)';
     return msg;
   } else {
     // Susans: flat hourly, no break deduction, no tips. Times are stored as
