@@ -801,5 +801,101 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(src.indexOf('shiftPay(') !== -1, 'router must call shiftPay');
   });
 
+  // ---- DUPLICATE GUARD (request id + server dedupe) ----
+  test('SUBMIT_TIMEOUT_MS: 30s, above the observed 16.3s worst case', () => {
+    assertEq(SUBMIT_TIMEOUT_MS, 30000);
+  });
+  test('callRouter: sends request_id in the payload', async () => {
+    let sent = null;
+    const fake = async (url, opts) => {
+      sent = JSON.parse(opts.body);
+      return { ok: true, json: async () => ({ success: true, message: 'ok' }) };
+    };
+    await callRouter('hi', { fetchImpl: fake, requestId: 'abc-123' });
+    assertEq(sent.request_id, 'abc-123');
+  });
+  test('callRouter: omitted request id sends an empty string, never "undefined"', async () => {
+    let sent = null;
+    const fake = async (url, opts) => {
+      sent = JSON.parse(opts.body);
+      return { ok: true, json: async () => ({ success: true, message: 'ok' }) };
+    };
+    await callRouter('hi', { fetchImpl: fake });
+    assertEq(sent.request_id, '');
+  });
+  test('submitWithRetry: every retry carries the SAME request_id', async () => {
+    // This is the mechanism. If the id changed per attempt the server could not
+    // tell a retry from a new entry, and a slow-but-successful first attempt
+    // would be written twice — the 2026-07-27 duplicate.
+    const ids = [];
+    const router = async (text, deps) => {
+      ids.push(deps.requestId);
+      if (ids.length < 3) throw new SubmitError('timeout', 'slow');
+      return { success: true, message: 'ok' };
+    };
+    await submitWithRetry('hi', {
+      router, sleep: () => Promise.resolve(), requestId: 'stable-1'
+    });
+    assertEq(ids.length, 3, 'should have taken 3 attempts');
+    assert(ids.every((v) => v === 'stable-1'), 'ids drifted across retries: ' + ids.join(','));
+  });
+  test('newRequestId: unique, non-empty, and stable in type', () => {
+    const seen = new Set();
+    for (let i = 0; i < 200; i++) {
+      const id = newRequestId();
+      assert(typeof id === 'string' && id.length > 8, 'bad id: ' + id);
+      assert(!seen.has(id), 'duplicate id generated: ' + id);
+      seen.add(id);
+    }
+  });
+  test('processEntry: a fresh submit gets a new id, a retry reuses it', async () => {
+    const priorEntry = pendingEntry, priorId = pendingRequestId;
+    const ids = [];
+    window.__testRouter = async (text, deps) => {
+      ids.push(deps.requestId);
+      throw new SubmitError('server', 'nope');   // permanent: keeps pendingEntry
+    };
+    window.__testSleep = () => Promise.resolve();
+    try {
+      await processEntry('first');
+      const idA = ids[ids.length - 1];
+      await processEntry('first', { reuseRequestId: true });   // the Retry button
+      const idB = ids[ids.length - 1];
+      assertEq(idB, idA, 'Retry must reuse the id so the router can dedupe');
+      await processEntry('second');                            // a new submission
+      assert(ids[ids.length - 1] !== idA, 'a fresh submit must get a new id');
+    } finally {
+      delete window.__testRouter; delete window.__testSleep;
+      pendingEntry = priorEntry; pendingRequestId = priorId;
+      hideFailCard();
+    }
+  });
+  test('router: dedupes by request id under a lock, and only caches successes', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    assert(src.indexOf('body.request_id') !== -1, 'router must read request_id');
+    assert(src.indexOf('LockService.getScriptLock') !== -1, 'router must take the script lock');
+    assert(src.indexOf('CacheService.getScriptCache') !== -1, 'router must use the cache');
+    // The lock has to be held across the work, not just the cache read: the
+    // retry starts before the original writes, so an unlocked check sees nothing.
+    const lockAt  = src.indexOf('tryLock');
+    const writeAt = src.indexOf('switch (category)');
+    const cacheAt = src.indexOf('cache.put');
+    const relAt   = src.indexOf('lock.releaseLock');
+    assert(lockAt !== -1 && writeAt !== -1 && cacheAt !== -1 && relAt !== -1, 'missing a piece');
+    assert(lockAt < writeAt, 'lock must be taken before the sheet write');
+    assert(writeAt < cacheAt, 'result must be cached after the write');
+    assert(cacheAt < relAt, 'lock must be released only after caching');
+    // A failed request must stay retryable.
+    assert(src.indexOf('if (cacheKey) cache.put') !== -1, 'cache only on the success path');
+  });
+  test('router: appended Track rows get their number formats stamped', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    assert(src.indexOf('function formatTrackRow') !== -1, 'formatTrackRow must exist');
+    assert(src.indexOf('formatTrackRow(trackTab') !== -1, 'and be called after the append');
+    const appendAt = src.indexOf('trackTab.appendRow');
+    const fmtAt    = src.indexOf('formatTrackRow(trackTab');
+    assert(appendAt < fmtAt, 'format the row after appending it');
+  });
+
   runTests();
 }

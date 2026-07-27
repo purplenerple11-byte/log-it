@@ -50,9 +50,25 @@ and `server/trackPay.js` (→ `trackPay.gs`, Track wage + withholding).
 
 ### Invariants — these are load-bearing, don't undo them
 
-- **Server worst case (~5-9s) must stay under the client's 15s timeout.** That gap is the *only*
-  reason client retries are duplicate-safe. Never add server-side retries or sleeps back into the
-  `.gs` — that's the bug v4.2 fixed (up to 18 Gemini calls + duplicate rows).
+- **Duplicate safety comes from the request id, NOT from timing.** This file used to claim the
+  server's worst case was "~5-9s" and that the gap to the client's 15s timeout was the only reason
+  retries were duplicate-safe. **That was wrong.** The execution log shows a 16.3s run on
+  2026-07-27 that wrote its row *after* the client had already given up and retried — two rows for
+  one entry — plus historical runs of 268s / 107s / 82s. No client timeout is high enough to rely
+  on. What actually protects us (v4.6): the client sends a `request_id` that stays constant across
+  its automatic retries *and* the Retry button, and `doPost` holds the **script lock for the whole
+  request** while checking a `CacheService` entry keyed on that id. The lock must span the sheet
+  write, not just the cache read — a retry starts *before* the original writes, so an unlocked
+  check sees nothing. Only successes are cached, so a genuinely failed request stays retryable.
+  Tests assert this ordering against the `.gs` source. Client timeout is now 30s, which merely
+  stops ordinary slow runs from retrying at all.
+- Still true: never add server-side retries or sleeps back into the `.gs` — that's the bug v4.2
+  fixed (up to 18 Gemini calls + duplicate rows). Keeping the server fast is worth doing; it just
+  isn't what makes retries safe.
+- **Appended Track rows must have their number formats stamped** (`formatTrackRow`). The Track tab
+  is a Sheets *Table*; a row appended past the table's managed range inherits whatever formatting
+  the cells carried, and one row came out with every number rendered as a 1900-era date (9.27 →
+  "1/8/1900 6:28:48"). The values were fine, the formats were not.
 - **Tip tab routing is code, never the prompt.** Gemini returns *facts* for a tip entry
   (`venue`, `clock_in`/`clock_out` as 24h `HH:MM`, `hours`, `tips`); `routeTip()` in
   `server/tipRouting.js` picks Track vs Susans and `shiftHours()` derives the length. The old
