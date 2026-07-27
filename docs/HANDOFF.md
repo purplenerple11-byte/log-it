@@ -16,7 +16,7 @@ capital M).
 PWA (index.html, GitHub Pages)
   → fetch POST text/plain (avoids CORS preflight)
     → Google Apps Script Web App  ("Execute as: Me", access: Anyone)
-       source of truth in repo: server/routerWebApp.gs (v4.5) +
+       source of truth in repo: server/routerWebApp.gs (v4.6) +
          server/tipRouting.js + server/trackPay.js (pasted alongside it as
          additional files in the SAME Apps Script project — same project,
          NOT separate ones; Apps Script shares one global scope per project)
@@ -36,13 +36,20 @@ PWA (index.html, GitHub Pages)
   daily-line content + pure selectors; tests live in `tests.js`, loaded only
   under `?test=1`):
   - Submission: `processEntry` → `submitWithRetry` (3 attempts, backoff 1s/3s)
-    → `callRouter` (15s `AbortController` timeout, typed `SubmitError`:
+    → `callRouter` (30s `AbortController` timeout, typed `SubmitError`:
     timeout/network/http/server; `isTransient` decides retry). Input held in
     `pendingEntry`, cleared ONLY on success; failures show `#fail-card`
     (Retry/Copy/Dismiss).
-  - **Invariant:** server worst case (~5-9s) must stay under the client's 15s
-    timeout — that's what makes client retries duplicate-safe. Don't add
-    server retries/sleeps back.
+  - **Invariant (corrected in v4.6):** duplicate safety comes from the
+    `request_id`, NOT from timing. The old claim that a ~5-9s server vs a 15s
+    client timeout made retries safe was wrong — a 16.3s run on 2026-07-27
+    wrote its row after the client had given up and retried, producing two
+    rows; history shows runs of 268s/107s/82s. Now the client sends a
+    request_id constant across retries and the Retry button, and doPost holds
+    the script lock across the whole request while checking a CacheService
+    entry on that id. Lock must span the write, not just the cache read.
+    Only successes are cached. Timeout raised to 30s. Still don't add
+    server-side retries/sleeps.
   - Today view: successful logs mirrored to `localStorage` key `today_logs`
     (`{ts,day,category,sub_route,message,text}`); pruned to local day on write
     (= midnight reset, no timer). Tiny 15px orange squares under the
@@ -85,14 +92,14 @@ PWA (index.html, GitHub Pages)
 ## Testing (browser-only, no CLI runner)
 
 - In-page harness: serve repo (`python3 -m http.server 8777`) and open
-  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 112 passed, 0
+  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 120 passed, 0
   failed.** Any change must keep it green; new features add tests there.
   Tests live in `tests.js`; `index.html` injects it only when `?test=1` is
   set, so production never fetches it. The harness reads production globals
   (one-way — production must never reference test symbols).
 - `?mock=<success|server|http4xx|http5xx|network|timeout>` fakes the router in
   the real UI (set any non-empty router URL in localStorage first);
-  `&to=<ms>` shortens the 15s timeout. Both dev switches are inert without
+  `&to=<ms>` shortens the 30s timeout. Both dev switches are inert without
   URL params.
 - Drive it with the Claude Browser pane; read the footer via
   `document.querySelector('pre').textContent` filtering for "passed".
@@ -186,6 +193,24 @@ PWA (index.html, GitHub Pages)
     cache-buster in `fetchText`/`fetchJson`. **Needs the user to add F-I
     headers to the Track tab, paste `trackPay.gs`, and republish.**
 
+16. **Duplicate-write fix** (router v4.6). Logging one shift on 2026-07-27
+    produced two rows. Cause was not the sheet: doPost ran 16.343s against the
+    client's 15s timeout, the client aborted and retried, and the original
+    finished and wrote anyway. Proof it was two real executions rather than a
+    render glitch — the second row's net was 131.70, i.e. the incremental
+    figure you only get if the week already contained the first row's 9.27h.
+    Fix: client-generated request_id, stable across automatic retries AND the
+    Retry button; doPost holds the script lock for the whole request and
+    returns a cached response for a repeat id without writing. Simulated the
+    exact race: 2 writes before, 1 write after. Also raised the timeout to 30s
+    and added formatTrackRow, because a row appended past the Sheets Table's
+    range rendered every number as a 1900-era date. 8 new tests, each verified
+    to fail against the broken behaviour first. **This corrected a documented
+    invariant that was simply false** — see the client section above.
+    Cleanup done by hand: duplicate row deleted; the surviving row was also
+    re-dated to 7/26 and its F-I recomputed, since it was logged Monday for a
+    Sunday shift and had been taxed as a fresh pay week ($23.37 too high).
+
 ## Key facts (don't re-litigate)
 
 - Cost is a NON-issue: ~$0.0005/log. Do not spend effort on token/cost
@@ -209,14 +234,14 @@ PWA (index.html, GitHub Pages)
   The legacy script wrote a Date in column B, so if any of its rows survive,
   reading hours from B would poison the weekly pay math — `sumTrackHours`
   guards with a numeric check and a test proves it.
-- First request after publishing a new version can be slow or time out
-  client-side while the Apps Script container warms up. Observed 2026-07-23:
-  ~4 failed attempts, zero Gemini calls logged, zero rows written, then normal
-  service. It dies before reaching Gemini, so it is write-safe — but note it
-  does bend the duplicate-safety invariant, which assumes the server always
-  finishes under the client's 15s timeout. If a slow first call ever DOES
-  reach the sheet, the retries could double-write; check for dupes before
-  assuming otherwise.
+- First request after publishing a new version, or after a long idle, can be
+  slow. Observed 2026-07-23: ~4 failed attempts, zero Gemini calls, zero rows
+  written. **This note used to warn that "if a slow first call ever DOES reach
+  the sheet, the retries could double-write" — that is exactly what happened
+  four days later on 2026-07-27** (a 16.3s run wrote its row after the client
+  gave up). It was flagged and not acted on; don't repeat that. It is fixed
+  properly now by the request_id dedupe (v4.6), so slow runs are no longer a
+  correctness problem, only a latency one.
 - The 0.5h Track break deduction is pure script (`BREAK_DEDUCTION_HRS`), not
   AI, and the prompt says nothing about breaks — so there is no double
   deduction. The legacy script's "only if over 5 hours" rule is gone; the

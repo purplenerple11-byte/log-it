@@ -774,11 +774,19 @@ let recognition  = null;
 let mode         = 'voice';
 let confirmTimer = null;
 let pendingEntry = null;
+// Identifies one user submission. Stays the SAME across automatic retries and
+// the Retry button so the router can recognise a duplicate — see the duplicate
+// guard in routerWebApp.gs. Cleared with pendingEntry on success.
+let pendingRequestId = null;
 
 // ================================================================
 // SUBMIT CONFIG
 // ================================================================
-const SUBMIT_TIMEOUT_MS  = 15000;
+// 30s, not 15s: a 16.3s execution against the old 15s timeout made the client
+// give up on a request that then succeeded anyway, and the retry wrote a second
+// row. The router now dedupes by request id, so this is belt and braces — it
+// keeps an ordinary slow run from spuriously retrying at all.
+const SUBMIT_TIMEOUT_MS  = 30000;
 const SUBMIT_MAX_ATTEMPTS = 3;
 const SUBMIT_BACKOFFS_MS = [1000, 3000]; // before retry #1, retry #2
 const CONFIRM_DURATION_MS = 3800;
@@ -952,13 +960,21 @@ function validateConfig() {
 // ================================================================
 // CORE FLOW
 // ================================================================
-async function processEntry(text) {
+function newRequestId() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'r-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+async function processEntry(text, opts = {}) {
   pendingEntry = text;
+  // A fresh submission gets a new id; retrying the same entry keeps the old one
+  // so the router sees it as the same request and won't write a second row.
+  if (!opts.reuseRequestId || !pendingRequestId) pendingRequestId = newRequestId();
   hideFailCard();
   setStatus('Thinking…');
   document.getElementById('transcript').textContent = text;
 
-  const deps = {};
+  const deps = { requestId: pendingRequestId };
   if (window.__testRouter) deps.router = window.__testRouter;
   if (window.__testSleep)  deps.sleep  = window.__testSleep;
 
@@ -970,6 +986,7 @@ async function processEntry(text) {
     recordTodayLog(result.category, result.sub_route, result.message, text);
     setStatus('Logged ✓');
     pendingEntry = null;
+    pendingRequestId = null;
     clearInputs();
     setTimeout(() => {
       setStatus(mode === 'voice' ? 'Hold to log' : 'Type to log');
@@ -997,6 +1014,7 @@ async function callRouter(text, deps = {}) {
 
   const payload = {
     text,
+    request_id: deps.requestId || '',
     sheet_ids: {
       tip:     LS.get('sheet_tip'),
       meal:    LS.get('sheet_meal'),
@@ -1124,7 +1142,9 @@ function hideFailCard() {
 }
 
 function retryPending() {
-  if (pendingEntry) processEntry(pendingEntry);
+  // Reuse the id: if the original actually got through despite looking failed,
+  // the router recognises this as the same request instead of logging it twice.
+  if (pendingEntry) processEntry(pendingEntry, { reuseRequestId: true });
 }
 
 async function copyPending() {

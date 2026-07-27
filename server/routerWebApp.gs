@@ -1,5 +1,5 @@
 // ================================================================
-// Log It — Router Web App  (v4.5 — Track Pay & Withholding)
+// Log It — Router Web App  (v4.6 — Duplicate Guard)
 // File:    routerWebApp.gs
 // Deploy:  Web App  |  Execute as: Me  |  Who has access: Anyone
 //
@@ -9,6 +9,11 @@
 //
 // SETUP: Apps Script → Project Settings → Script Properties
 //        Add:  GEMINI_API_KEY = your key from aistudio.google.com
+//
+// v4.6 changes: request_id + script lock + CacheService dedupe in doPost, so a
+// client retry can never write a second row (see the comment there). Client
+// timeout raised 15s -> 30s. Appended Track rows get their number formats set
+// explicitly, fixing rows that rendered as 1900-era dates.
 //
 // v4.5 changes: Track rows now carry pay — columns F-I hold Gross Wage,
 // Est. Net Wage, Total Take-Home, and Eff. $/hr. The withholding model lives in
@@ -86,12 +91,49 @@ var SYSTEM_PROMPT = 'You are a personal log entry parser. Extract structured dat
 // ENTRY POINT
 // ================================================================
 function doPost(e) {
+  var lock = null;
   try {
-    var body     = JSON.parse(e.postData.contents);
-    var text     = (body.text || '').trim();
-    var sheetIds = body.sheet_ids || {};
+    var body      = JSON.parse(e.postData.contents);
+    var text      = (body.text || '').trim();
+    var sheetIds  = body.sheet_ids || {};
+    var requestId = String(body.request_id || '').trim();
 
     if (!text) throw new Error('No text received');
+
+    // ------------------------------------------------------------
+    // DUPLICATE GUARD — do not remove. This, not timing, is what makes
+    // client retries safe.
+    //
+    // On 2026-07-27 a doPost ran 16.3s against the client's then-15s timeout.
+    // The client gave up, called it transient, and retried; the original was
+    // still alive, finished, and wrote its row, so the retry wrote a second one.
+    // Execution history shows runs of 268s/107s/82s, so no client timeout is
+    // ever high enough to rely on.
+    //
+    // The client sends a request_id that stays constant across its retries. We
+    // hold the script lock for the WHOLE request, so a retry blocks until the
+    // original finishes and then finds its cached response and returns that
+    // without writing. Checking the cache without the lock would not help: the
+    // retry started BEFORE the original wrote anything.
+    // ------------------------------------------------------------
+    var cache    = CacheService.getScriptCache();
+    var cacheKey = requestId ? 'req_' + requestId : '';
+
+    if (cacheKey) {
+      lock = LockService.getScriptLock();
+      // Best effort: if the wait expires we still check the cache below and
+      // proceed. Logging a row late beats refusing to log at all.
+      if (!lock.tryLock(45000)) {
+        lock = null;
+        Logger.log('doPost: lock wait expired for ' + requestId);
+      }
+      var prior = cache.get(cacheKey);
+      if (prior) {
+        Logger.log('doPost: duplicate request ' + requestId + ' — returning cached result, no write');
+        return ContentService.createTextOutput(prior)
+                            .setMimeType(ContentService.MimeType.JSON);
+      }
+    }
 
     // Call Gemini with automatic model fallback
     var parsed    = callGeminiWithFallback(text);
@@ -122,11 +164,20 @@ function doPost(e) {
       default: throw new Error('Unknown category: ' + category);
     }
 
-    return jsonOk({ success: true, message: message, category: category, sub_route: sub_route });
+    var result = { success: true, message: message, category: category, sub_route: sub_route };
+
+    // Only successes are remembered — a failed request wrote nothing, so a
+    // retry of it must be allowed to run for real. 6h is CacheService's max and
+    // far longer than the seconds a retry actually takes.
+    if (cacheKey) cache.put(cacheKey, JSON.stringify(result), 21600);
+
+    return jsonOk(result);
 
   } catch (err) {
     Logger.log('doPost error: ' + err.message);
     return jsonOk({ success: false, error: err.message });
+  } finally {
+    if (lock) lock.releaseLock();
   }
 }
 
@@ -234,6 +285,19 @@ function getTab(ss, name) {
   return t;
 }
 
+// A=timestamp, B=hours, C=tips, D=tips/hr (written as a "$0.00" string, left
+// alone), E=notes, F-I=Gross Wage | Est. Net Wage | Total Take-Home | Eff. $/hr.
+function formatTrackRow(tab, row) {
+  try {
+    tab.getRange(row, 1).setNumberFormat('M/d/yyyy H:mm:ss');
+    tab.getRange(row, 2, 1, 2).setNumberFormat('0.##');     // hours, tips
+    tab.getRange(row, 6, 1, 4).setNumberFormat('0.00');     // the money columns
+  } catch (err) {
+    // Cosmetic only — never lose a logged row over formatting.
+    Logger.log('formatTrackRow: ' + err.message);
+  }
+}
+
 // ================================================================
 // TIP HANDLER
 // ================================================================
@@ -260,6 +324,12 @@ function handleTip(ss, sub_route, data) {
 
     trackTab.appendRow([ts, hrs, tips > 0 ? tips : '', rate, data.notes || '',
                         pay.grossWage, pay.netWage, pay.takeHome, pay.effectiveHourly]);
+
+    // Stamp the formats explicitly. The Track tab is a Sheets *Table*, and a row
+    // appended past the table's managed range inherits whatever formatting the
+    // cells happened to carry — one row came out with every number rendered as a
+    // 1900-era date. Setting them here is independent of the table.
+    formatTrackRow(trackTab, trackTab.getLastRow());
 
     var msg = 'Track shift logged — ' + hrs + 'h';
     if (tips) msg += ', $' + tips + ' tips';
