@@ -441,39 +441,70 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(lineFor(new Date(), null), null);
     assertEq(lineFor(new Date(2026, 6, 15, 9, 0), [{ text: 'x', when: 'pm' }]), null);
   });
-  test('lineFor: picks vary across days (not stuck on one index)', () => {
+  test('lineFor: picks vary across days (5-line pool rotates cleanly)', () => {
     const pool = [{ text: 'a' }, { text: 'b' }, { text: 'c' }, { text: 'd' }, { text: 'e' }];
     const seen = new Set();
     for (let d = 1; d <= 30; d++) seen.add(lineFor(new Date(2026, 6, d, 9, 0), pool).text);
-    assert(seen.size >= 2, '30 days drew ' + seen.size + ' distinct lines');
+    assertEq(seen.size, 5, '30 days over a 5-line pool should draw all 5, got ' + seen.size);
   });
-  test('lineFor: consecutive days rarely repeat the same line (real pool)', () => {
+  test('lineFor: no repeats over a full year (real pool, rotation guarantee)', () => {
     let repeats = 0, prev = null;
     for (let i = 0; i < 365; i++) {
       const cur = lineFor(new Date(2026, 0, 1 + i, 9, 0), DAILY_LINES).text;
       if (prev !== null && cur === prev) repeats++;
       prev = cur;
     }
-    assert(repeats <= 12, 'morning line repeated the previous day ' + repeats + 'x in 2026 (chance is ~5; the pre-avalanche hash gave 24)');
+    assertEq(repeats, 0, 'morning line repeated the previous day ' + repeats + 'x in 2026 — the old hash-mod sampled with replacement and repeated far more');
   });
-  test('dailyHash: no plausible pool size makes consecutive days repeat (avalanche guard)', () => {
-    // The pre-avalanche djb2-xor was near-linear: consecutive-day keys produced
-    // hash deltas that were exact multiples of certain pool sizes, repeating the
-    // previous day's line up to 24x/year at size 77 (chance is ~5). Sweeping sizes
-    // — rather than only today's pool — keeps the guarantee independent of the
-    // content count, so editing DAILY_LINES can never silently reintroduce it.
-    let worstSize = 0, worstRepeats = 0;
-    for (let size = 60; size <= 120; size++) {
+  // Cycles are anchored to the absolute epoch day number (dayNumber), not to
+  // whichever date a test happens to start on — so "the first n days" only
+  // lines up with "one full cycle" if the start date's day number is itself a
+  // multiple of n. Advance a day at a time (dayNumber always advances by
+  // exactly 1) until that alignment holds, then run the window from there.
+  function alignedCycleStart(win, n) {
+    let d = new Date(2026, 0, 1, win === 'am' ? 9 : 18, 0);
+    while (dayNumber(d) % n !== 0) d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, d.getHours(), d.getMinutes());
+    return d;
+  }
+  test('lineFor: rotation guarantee sweep (once per cycle, min gap, no back-to-back)', () => {
+    // Replaces the old "avalanche guard" tolerance test. That test allowed up to
+    // 15 same-day-next-day repeats per year, which was the old hash-mod's actual
+    // failure mode dressed up as a guard rail. The rotation algorithm makes a
+    // much stronger guarantee: every index appears exactly once per cycle, and
+    // no repeat lands closer than minGapFor(n) across a cycle boundary. Sweep
+    // pool sizes — not just today's content — so editing DAILY_LINES can never
+    // silently regress this.
+    for (let size = 60; size <= 200; size += 10) {
       const pool = Array.from({ length: size }, (_, i) => ({ text: 'line-' + i }));
-      let repeats = 0, prev = null;
-      for (let i = 0; i < 365; i++) {
-        const cur = lineFor(new Date(2026, 0, 1 + i, 9, 0), pool).text;
-        if (prev !== null && cur === prev) repeats++;
-        prev = cur;
+      const start = alignedCycleStart('am', size);
+
+      // (a) one full cycle (n consecutive days, from a cycle boundary) uses
+      // every entry exactly once
+      const firstCycle = new Set();
+      for (let i = 0; i < size; i++) {
+        const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i, 9, 0);
+        firstCycle.add(lineFor(d, pool).text);
       }
-      if (repeats > worstRepeats) { worstRepeats = repeats; worstSize = size; }
+      assertEq(firstCycle.size, size, 'pool size ' + size + ': first cycle only drew ' + firstCycle.size + ' distinct lines');
+
+      // (b) zero back-to-back repeats and (c) no repeat closer than minGapFor(n)
+      // over ~5 cycles
+      const gap = minGapFor(size);
+      const lastSeen = {};
+      let worstViolation = Infinity;
+      for (let i = 0; i < size * 5; i++) {
+        const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i, 9, 0);
+        const cur = lineFor(d, pool).text;
+        const day = dayNumber(d);
+        if (lastSeen[cur] !== undefined) {
+          const g = day - lastSeen[cur];
+          assert(g !== 0, 'pool size ' + size + ': back-to-back repeat at day ' + i);
+          if (g < worstViolation) worstViolation = g;
+        }
+        lastSeen[cur] = day;
+      }
+      assert(worstViolation >= gap, 'pool size ' + size + ': min gap ' + worstViolation + ' < required ' + gap);
     }
-    assert(worstRepeats <= 15, 'pool size ' + worstSize + ' repeated the previous day ' + worstRepeats + 'x in 2026 (chance ~5; the pre-avalanche hash hit 24)');
   });
   // ---- daily line: render ----
   test('renderDailyLine: text only, no attribution element', () => {
@@ -505,12 +536,61 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     }
     assertEq(texts.size, DAILY_LINES.length, 'duplicate line text');
   });
-  test('DAILY_LINES: substantial pools in both windows', () => {
-    assert(DAILY_LINES.length >= 90, 'want >= 90 lines, got ' + DAILY_LINES.length);
+  test('DAILY_LINES: substantial pools in both windows (~6-month rotation)', () => {
+    assert(DAILY_LINES.length >= 210, 'want >= 210 lines, got ' + DAILY_LINES.length);
     const am = DAILY_LINES.filter((l) => !l.when || l.when === 'am').length;
     const pm = DAILY_LINES.filter((l) => !l.when || l.when === 'pm').length;
-    assert(am >= 40, 'am pool only ' + am);
-    assert(pm >= 40, 'pm pool only ' + pm);
+    assert(am >= 180, 'am pool only ' + am);
+    assert(pm >= 180, 'pm pool only ' + pm);
+  });
+  test('dayNumber: stable within a calendar day, +1 across consecutive days', () => {
+    const early = dayNumber(new Date(2026, 6, 15, 0, 1));
+    const late = dayNumber(new Date(2026, 6, 15, 23, 59));
+    assertEq(early, late, 'same calendar date should give the same day number');
+    assertEq(dayNumber(new Date(2026, 6, 16, 0, 1)), early + 1, 'consecutive days should differ by exactly 1');
+  });
+  test('lineFor: one full am cycle over the real pool uses every am-pool line once', () => {
+    const amPool = DAILY_LINES.filter((l) => !l.when || l.when === 'am');
+    const start = alignedCycleStart('am', amPool.length);
+    const seen = new Set();
+    for (let i = 0; i < amPool.length; i++) {
+      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i, 9, 0);
+      seen.add(lineFor(d, DAILY_LINES).text);
+    }
+    assertEq(seen.size, amPool.length, 'one am cycle drew ' + seen.size + ' of ' + amPool.length + ' lines');
+  });
+  test('lineFor: real pools respect minGapFor over ~5 cycles', () => {
+    for (const win of ['am', 'pm']) {
+      const pool = DAILY_LINES.filter((l) => !l.when || l.when === win);
+      const gap = minGapFor(pool.length);
+      const hour = win === 'am' ? 9 : 18;
+      const lastSeen = {};
+      for (let i = 0; i < pool.length * 5; i++) {
+        const d = new Date(2026, 0, 1 + i, hour, 0);
+        const cur = lineFor(d, DAILY_LINES).text;
+        const day = dayNumber(d);
+        if (lastSeen[cur] !== undefined) {
+          const g = day - lastSeen[cur];
+          assert(g >= gap, win + ' pool: repeat gap ' + g + ' < required ' + gap);
+        }
+        lastSeen[cur] = day;
+      }
+    }
+  });
+  test('lineFor: morning and evening lines never collide over 10 years', () => {
+    for (let i = 0; i < 365 * 10; i++) {
+      const am = lineFor(new Date(2026, 0, 1 + i, 9, 0), DAILY_LINES).text;
+      const pm = lineFor(new Date(2026, 0, 1 + i, 18, 0), DAILY_LINES).text;
+      assert(am !== pm, 'day ' + i + ': same-day am/pm collision on "' + am + '"');
+    }
+  });
+  test('lineFor: small and degenerate pools still work', () => {
+    const one = [{ text: 'only' }];
+    for (let d = 1; d <= 10; d++) assertEq(lineFor(new Date(2026, 6, d, 9, 0), one).text, 'only');
+    const two = [{ text: 'x' }, { text: 'y' }];
+    const seen = new Set();
+    for (let d = 1; d <= 10; d++) seen.add(lineFor(new Date(2026, 6, d, 9, 0), two).text);
+    assertEq(seen.size, 2, '2-line pool should still surface both lines');
   });
   test('CFG_DEFAULTS: all five fields baked in and non-empty', () => {
     const keys = ['router_url', 'sheet_tip', 'sheet_meal', 'sheet_idea', 'sheet_car'];

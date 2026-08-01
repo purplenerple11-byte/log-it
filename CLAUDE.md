@@ -102,6 +102,22 @@ and `server/trackPay.js` (→ `trackPay.gs`, Track wage + withholding).
   so the app would silently keep hitting the old code. Expect the first request after a
   version bump to be slow or to time out client-side while the container warms up; it
   never reaches Gemini, so it writes nothing and is safe to retry.
+- **The daily line is a seeded rotation, not a hash-mod.** `lineFor` in `daily.js` used to be
+  `pool[dailyHash(key) % pool.length]` — deterministic and scattered on consecutive days, but
+  sampling *with replacement*, so nothing stopped a line reappearing days later (measured: 38
+  repeats within 7 days/year on the real content, one line shown 10x, one never shown).
+  `dailyHash` is kept exactly as-is but now only seeds a per-cycle Fisher-Yates shuffle
+  (`seededRandom`/mulberry32); every line shows exactly once before any of them repeat. **The
+  boundary repair (`orderFor`) is load-bearing** — without it the minimum gap between two
+  showings of the same line was 2 days; with it, 22+. Rotation length is the pool size in days,
+  so **adding lines to `DAILY_LINES` directly lengthens the no-repeat window** (currently ~180
+  lines/pool, ~6 months) — editing the list also reshuffles the whole schedule, so today's line
+  can change when content is added; that's expected. Untagged lines sit in both the am and pm
+  pools, so a same-day collision is possible; the pm pick is nudged **half the pool away**, never
+  by 1 — a +1 nudge steals tomorrow's regularly scheduled slot and manufactures a back-to-back
+  repeat. Every new `DAILY_LINES` entry must be unattributed (no `author` field) — two existing
+  attributed quotes turned out to be misattributed and had to be removed; don't reintroduce that
+  risk at scale.
 - **All paths must stay relative.** `start_url`/`scope` in `manifest.json`, the `tests.js` injection,
   and icon hrefs have to resolve under the `/log-it/` Pages subpath, not the domain root. A test
   guards the manifest.
