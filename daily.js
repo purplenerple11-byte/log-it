@@ -237,7 +237,7 @@ const DAILY_LINES = [
   { text: 'What did today confirm that you already suspected?', when: 'pm' },
   { text: "What's one thing today that deserves a follow-up tomorrow?", when: 'pm' },
   { text: "What did you notice today that you'd normally let slide?", when: 'pm' },
-  { text: "What's the receipt you're going to lose if you don't log it now?", when: 'pm' },
+  { text: 'Whose day did you make easier today?', when: 'pm' },
   { text: "What did today's first hour actually get you?", when: 'pm' },
   { text: "What's tonight's number worth double-checking?", when: 'pm' },
   { text: "What did you put off today that's still sitting there?", when: 'pm' },
