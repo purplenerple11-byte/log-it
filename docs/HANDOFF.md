@@ -1,4 +1,4 @@
-# Log It — Session Handoff (2026-07-18)
+# Log It — Session Handoff (2026-08-01)
 
 Read this first. It's the state of the project, how we work, and what's next.
 
@@ -210,6 +210,57 @@ PWA (index.html, GitHub Pages)
     Cleanup done by hand: duplicate row deleted; the surviving row was also
     re-dated to 7/26 and its F-I recomputed, since it was logged Monday for a
     Sunday shift and had been taxed as a fresh pay week ($23.37 too high).
+17. **Daily line: fixed real repeats (`fix/daily-line-rotation`).** Item 10's
+    `pool[dailyHash(key) % pool.length]` was sampling *with replacement* —
+    deterministic and scattered on consecutive days, but nothing stopped a
+    line reappearing days later. Measured on the pre-fix content (99 lines,
+    am pool 76 / pm pool 75, over 2026): **38 repeats within 7 days** on the
+    am pool (37 on pm), one line shown 10x/year, one pm line never shown at
+    all. Root cause was the algorithm, not the content.
+    - **Fix:** replaced `lineFor` with a seeded per-cycle Fisher-Yates
+      rotation. `dailyHash` is kept exactly as-is but now seeds the shuffle
+      (`seededRandom`, mulberry32) instead of picking the index directly.
+      Within one cycle (`pool.length` days) every line shows exactly once, so
+      it cannot repeat until the whole pool has been used. New helpers:
+      `dayNumber` (epoch day for the local calendar date — stable across
+      timezones/DST), `minGapFor` (gap requirement scaling with pool size,
+      capped at 21), `rawOrder`/`orderFor` (the shuffle + boundary repair),
+      `scheduledPick`.
+    - **Boundary repair is load-bearing.** A plain per-cycle shuffle still
+      lets a line land late in cycle N and early in cycle N+1 — measured
+      minimum gap without the repair was **2 days**. `orderFor` swaps any of
+      cycle N+1's first `minGapFor(n)` slots that collide with cycle N's last
+      `minGapFor(n)` slots. With it, minimum gap is **22 days** on the real
+      pools (180+ each).
+    - **Same-day am/pm collision fix.** Untagged lines live in both pools, so
+      the am and pm pick could coincidentally be the same line on the same
+      day. Filtering the untagged line out of one pool was rejected — it
+      would change pool length and shift the whole rotation. Instead, on a
+      collision the pm pick is nudged to a different slot. The nudge must be
+      **half the pool away, not +1**: +1 is literally tomorrow's regularly
+      scheduled slot (each day advances the cycle position by exactly 1), so
+      nudging by 1 showed the same line again the very next day — a
+      self-inflicted back-to-back repeat, caught by the 12-year simulation
+      (15 same-day-adjacent repeats over 12 years) before it shipped.
+    - **Content grown to lengthen the rotation.** Untagged 52→127, am-tagged
+      24→64, pm-tagged 23→63 (+140 lines net, all unattributed — no `author`
+      field on any new entry, since two existing attributed quotes had
+      already turned out to be misattributed and weren't worth the risk at
+      scale). am pool 76→191, pm pool 75→190. Rotation length is the pool
+      size in days, so this took the no-repeat window from ~2.5 months to
+      **~6.3 months**.
+    - **Measured after the fix**, 12-year simulation over the real content:
+      minimum gap 22 days, 0 repeats within 7 or 14 days, 0 back-to-back
+      repeats, 0 same-day am/pm collisions — for both pools.
+    - `tests.js`: retired the two tolerance-based guards (`repeats <= 12` and
+      `worstRepeats <= 15`) that had quietly encoded the bug as acceptable
+      the old suite passed while lines were actually repeating 38x/year.
+      Added rotation-guarantee, min-gap, same-day, and `dayNumber` tests;
+      tightened the 5-line-pool and pool-size tests. Verified each new test
+      fails against the old hash-mod `lineFor` before the fix (TDD red, then
+      green). Test count: 108 → 125.
+    - `lineFor(date, lines)` kept its exact signature — `index.html` was not
+      touched.
 
 ## Key facts (don't re-litigate)
 
