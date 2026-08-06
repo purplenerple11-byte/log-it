@@ -977,5 +977,114 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(appendAt < fmtAt, 'format the row after appending it');
   });
 
+  // ---- SHIFT DATE (server/tipRouting.js) ----
+  // Today is fixed so these never drift: Wed 2026-08-05.
+  const TODAY = new Date(2026, 7, 5, 14, 30);
+  const RSD = (v) => resolveShiftDate(v, TODAY);
+
+  test('resolveShiftDate: a named past day back-dates the shift', () => {
+    const r = RSD('2026-08-02');                 // the Sunday before
+    assertEq(r.backdated, true);
+    assertEq(r.reason, 'ok');
+    assertEq(r.date.getFullYear(), 2026);
+    assertEq(r.date.getMonth(), 7);
+    assertEq(r.date.getDate(), 2);
+    assertEq(r.date.getHours(), 20, 'evening stamp, well clear of midnight/DST');
+  });
+  test("resolveShiftDate: today's own date is not treated as a back-date", () => {
+    const r = RSD('2026-08-05');
+    assertEq(r.backdated, false);
+    assertEq(r.reason, 'today');
+    assertEq(r.date.getTime(), TODAY.getTime(), 'keeps the real log time');
+  });
+  test('resolveShiftDate: absent date falls back to today', () => {
+    for (const v of [null, undefined, '']) {
+      const r = RSD(v);
+      assertEq(r.backdated, false, JSON.stringify(v));
+      assertEq(r.reason, 'absent', JSON.stringify(v));
+      assertEq(r.date.getTime(), TODAY.getTime());
+    }
+  });
+  test('resolveShiftDate: rejects anything that is not an exact YYYY-MM-DD', () => {
+    // A hallucinated or reformatted date must never be trusted — it would file
+    // the shift in the wrong pay week and misprice it silently.
+    for (const v of ['yesterday', 'Aug 2', '08/02/2026', '2026-8', 'Sunday',
+                     '2026-08-02T00:00', 'null', '20260802', 42, {}]) {
+      const r = RSD(v);
+      assertEq(r.backdated, false, 'should reject ' + JSON.stringify(v));
+      assert(r.date.getTime() === TODAY.getTime(), 'should fall back for ' + JSON.stringify(v));
+    }
+  });
+  test('resolveShiftDate: rejects dates that do not exist', () => {
+    for (const v of ['2026-02-30', '2026-13-01', '2026-04-31', '2026-00-10']) {
+      const r = RSD(v);
+      assertEq(r.backdated, false, v);
+      assert(/not a real date|unparseable/.test(r.reason), v + ' → ' + r.reason);
+    }
+  });
+  test('resolveShiftDate: refuses future dates', () => {
+    for (const v of ['2026-08-06', '2026-09-01', '2027-01-01']) {
+      const r = RSD(v);
+      assertEq(r.backdated, false, v);
+      assert(r.reason.indexOf('future') !== -1, v + ' → ' + r.reason);
+    }
+  });
+  test('resolveShiftDate: refuses dates older than the back-date window', () => {
+    const inside = RSD('2026-06-21');   // 45 days back — the boundary
+    assertEq(inside.backdated, true, '45 days back should be allowed');
+    const outside = RSD('2026-06-20');  // 46 days back
+    assertEq(outside.backdated, false, '46 days back should be refused');
+    assert(outside.reason.indexOf('too old') !== -1, outside.reason);
+    assertEq(RSD('2025-08-02').backdated, false, 'a year back is refused');
+  });
+  test('resolveShiftDate: never returns a non-Date, whatever the input', () => {
+    for (const v of [null, 'junk', '2026-08-02', '2099-01-01', NaN, [], true]) {
+      assert(RSD(v).date instanceof Date, 'not a Date for ' + JSON.stringify(v));
+    }
+    assert(resolveShiftDate('2026-08-02', 'not-a-date').date instanceof Date,
+      'a bad fallback must still yield a Date');
+  });
+
+  test('shift date drives the pay week, which is the whole point', () => {
+    // Sun 2026-08-02 closes the Mon 7/27-8/2 week. Logged on Wed 8/5 without a
+    // shift date it would land in 8/3-8/9 and be taxed as a fresh week.
+    const shifted = resolveShiftDate('2026-08-02', TODAY).date;
+    assertEq(payWeekStart(shifted).getTime(), new Date(2026, 6, 27).getTime(),
+      'a 8/2 shift belongs to the week starting Mon 7/27');
+    assertEq(payWeekStart(TODAY).getTime(), new Date(2026, 7, 3).getTime(),
+      'logging on 8/5 would otherwise use the week starting Mon 8/3');
+    assert(payWeekStart(shifted).getTime() !== payWeekStart(TODAY).getTime(),
+      'the two weeks must differ or this test proves nothing');
+  });
+  test('shift date changes the money, not just the label', () => {
+    // 27.69h already logged in the 7/27-8/2 week; a 9.17h shift on top.
+    const inWeek = shiftPay(27.69, 9.17, 242).netWage;
+    const asFresh = shiftPay(0, 9.17, 242).netWage;
+    assert(asFresh - inWeek > 20,
+      'mis-dating should visibly overstate the net; got ' + asFresh + ' vs ' + inWeek);
+  });
+
+  test('router: resolves the shift date before summing the week', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    assert(src.indexOf('resolveShiftDate(data.shift_date') !== -1,
+      'doPost must resolve shift_date');
+    assert(src.indexOf('handleTip(ss, sub_route, data, shift)') !== -1,
+      'the resolved date must reach handleTip');
+    // Order is load-bearing: the week sum keys off the shift date, so resolution
+    // has to happen before sumTrackHours runs.
+    assert(src.indexOf('resolveShiftDate(data.shift_date') < src.indexOf('sumTrackHours'),
+      'resolve the date before summing the week');
+    assert(src.indexOf('shortDateLabel(ts)') !== -1,
+      'a back-dated shift must be echoed on the confirmation card');
+  });
+  test('router: the prompt asks for shift_date and supplies the current date', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    assert(src.indexOf('"shift_date":"<YYYY-MM-DD|null>"') !== -1, 'schema must carry shift_date');
+    assert(src.indexOf('SHIFT DATE:') !== -1, 'prompt must explain when to set it');
+    assert(src.indexOf('CURRENT DATE: ') !== -1, 'relative dates need an anchor');
+    assert(src.indexOf('SYSTEM_PROMPT + currentDateLine()') !== -1,
+      'the date must be appended per request, not baked into the const');
+  });
+
   runTests();
 }

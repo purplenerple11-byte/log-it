@@ -1,5 +1,5 @@
 // ================================================================
-// Log It — Router Web App  (v4.6 — Duplicate Guard)
+// Log It — Router Web App  (v4.7 — Shift Date Extraction)
 // File:    routerWebApp.gs
 // Deploy:  Web App  |  Execute as: Me  |  Who has access: Anyone
 //
@@ -9,6 +9,15 @@
 //
 // SETUP: Apps Script → Project Settings → Script Properties
 //        Add:  GEMINI_API_KEY = your key from aistudio.google.com
+//
+// v4.7 changes: tip entries carry shift_date, so a shift logged days later is
+// stamped and priced against the day it HAPPENED, not the day it was typed.
+// Previously the pay week came from now(), so logging Sunday's shift on
+// Wednesday treated it as a fresh week and overstated the net by ~$23. Gemini
+// only fills shift_date when a day is actually named; resolveShiftDate rejects
+// anything unparseable, unreal, future, or older than 45 days and falls back to
+// today. Back-dated shifts are echoed on the confirmation card ("logged for
+// Sun Aug 2") so a misread day is visible instead of silent.
 //
 // v4.6 changes: request_id + script lock + CacheService dedupe in doPost, so a
 // client retry can never write a second row (see the comment there). Client
@@ -75,13 +84,18 @@ var SYSTEM_PROMPT = 'You are a personal log entry parser. Extract structured dat
 + '- Bare hours without am/pm: 7 8 9 10 11 → AM  |  12 1 2 3 4 5 6 → PM\n'
 + '- Examples: "9:18 in, 6:50 out" → clock_in "09:18", clock_out "18:50".\n'
 + '  "2-4" → "14:00"/"16:00". "8-4" → "08:00"/"16:00". "11-7" → "11:00"/"19:00".\n\n'
++ 'SHIFT DATE: set "shift_date" (YYYY-MM-DD) ONLY when the entry says which day the\n'
++ 'shift happened — "yesterday", "last night", "Sunday", "Aug 2", "the 2nd", "two days\n'
++ 'ago". Resolve it against CURRENT DATE below. If no day is named, use null and the\n'
++ 'server assumes today. Never guess or infer a date from anything but an explicit\n'
++ 'mention: a wrong date files the shift in the wrong pay week.\n\n'
 + 'TIP VENUE: set "venue" ONLY when the text explicitly names one — susan/sue/susans\n'
 + '(any spelling) → "susans"; track/valet → "track". Otherwise null. Never infer venue\n'
 + 'from times or tip amounts, and never choose the tab yourself — the server does that.\n\n'
 + 'TOLERANCE: Fix obvious typos (wokred→worked, susand→susans). Any variation of susan/sue/susans counts.\n\n'
 + 'IDEA MATERIALS: If an idea entry also mentions needing to buy/get something for the project (e.g. "fix the shop vac, need a new hose"), extract materials too. If no purchases mentioned, omit the "materials" key entirely.\n\n'
 + 'Return EXACTLY one of these JSON structures matching the category:\n\n'
-+ 'TIP:        {"category":"tip","data":{"venue":"<susans|track|null>","clock_in":"<HH:MM|null>","clock_out":"<HH:MM|null>","hours":<number|null>,"tips":<number|null>,"notes":"<string>"}}\n'
++ 'TIP:        {"category":"tip","data":{"venue":"<susans|track|null>","shift_date":"<YYYY-MM-DD|null>","clock_in":"<HH:MM|null>","clock_out":"<HH:MM|null>","hours":<number|null>,"tips":<number|null>,"notes":"<string>"}}\n'
 + 'MEAL:       {"category":"meal","sub_route":"Log","data":{"meal":"<Breakfast|Lunch|Dinner|Snack>","foods":"<comma-separated>","creatine":"<\u2713 or empty>","fish_oil":"<\u2713 or empty>","mct":"<\u2713 or empty>","multivitamin":"<\u2713 or empty>","notes":"<string>"}}\n'
 + 'IDEA:       {"category":"idea","sub_route":"Ideas","data":{"title":"<5-7 words>","category":"<Business|Money|Creative|Personal|Random>","effort":"<Quick Win|Medium Project|Big Swing>","excitement":<1-5>,"next_step":"<string>","tags":"<comma-separated>","materials":[{"item":"<thing to buy>","category":"<Hardware|Tools|Supplies|Parts|Other>"}]}}\n'
 + 'CAR:        {"category":"car","sub_route":"Maintenance Log","data":{"type":"<Oil Change|Repair>","mileage":<number|null>,"description":"<string>","parts_replaced":"<string>","cost":<number|null>,"shop_diy":"<string>","notes":"<string>"}}\n\n'
@@ -156,7 +170,13 @@ function doPost(e) {
       // sub_route so the client's confirmation card shows where it actually went.
       case 'tip':
         sub_route = routeTip(data);
-        message   = handleTip(ss, sub_route, data);
+        // Which DAY the shift happened decides its pay week, so resolve it
+        // before handleTip sums the week — see resolveShiftDate in tipRouting.gs.
+        var shift = resolveShiftDate(data.shift_date, now());
+        if (shift.reason !== 'ok' && shift.reason !== 'absent' && shift.reason !== 'today') {
+          Logger.log('shift_date rejected, using today instead — ' + shift.reason);
+        }
+        message   = handleTip(ss, sub_route, data, shift);
         break;
       case 'meal':    message = handleMeal(ss, data);            break;
       case 'idea':    message = handleIdea(ss, data);            break;
@@ -223,7 +243,10 @@ function callGeminiSingleModel(model, text, key) {
           + model + ':generateContent?key=' + key;
 
   var payload = JSON.stringify({
-    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    // Today's date is appended at call time, not baked into SYSTEM_PROMPT, so
+    // "yesterday"/"Sunday" can be resolved. SYSTEM_PROMPT stays a static const
+    // that tests can fetch and assert on.
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT + currentDateLine() }] },
     contents: [{ role: 'user', parts: [{ text: text }] }],
     generationConfig: {
       temperature: 0,
@@ -275,6 +298,20 @@ function jsonOk(obj) {
 
 function now() { return new Date(); }
 
+// Appended to SYSTEM_PROMPT per request so relative dates ("yesterday",
+// "Sunday") have something to resolve against. Day name included so the model
+// doesn't have to work out the weekday itself.
+function currentDateLine() {
+  var d = new Date();
+  return '\n\nCURRENT DATE: ' +
+         Utilities.formatDate(d, Session.getScriptTimeZone(), 'EEEE, yyyy-MM-dd') + '.';
+}
+
+// "Sun Aug 2" — used to echo a back-dated shift back at the user.
+function shortDateLabel(d) {
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'EEE MMM d');
+}
+
 function dateFmt(d) {
   return Utilities.formatDate(d || new Date(), Session.getScriptTimeZone(), 'MM/dd/yyyy');
 }
@@ -301,8 +338,12 @@ function formatTrackRow(tab, row) {
 // ================================================================
 // TIP HANDLER
 // ================================================================
-function handleTip(ss, sub_route, data) {
-  var ts   = now();
+function handleTip(ss, sub_route, data, shift) {
+  // The row is stamped with the day the shift HAPPENED, not when it was logged.
+  // That stamp is what sumTrackHours reads to pick the pay week, so a shift
+  // logged Wednesday for the previous Sunday is priced against the right week.
+  var ts   = (shift && shift.date instanceof Date) ? shift.date : now();
+  var back = !!(shift && shift.backdated);
   // Derived from the clock times when we have them — Gemini's own arithmetic
   // is only a fallback for entries that state hours and no times.
   var hrs  = shiftHours(data.clock_in, data.clock_out, data.hours);
@@ -331,7 +372,9 @@ function handleTip(ss, sub_route, data) {
     // 1900-era date. Setting them here is independent of the table.
     formatTrackRow(trackTab, trackTab.getLastRow());
 
-    var msg = 'Track shift logged — ' + hrs + 'h';
+    // Echo the date back whenever it isn't today, so a misread day is visible
+    // on the confirmation card rather than silently mispricing the week.
+    var msg = 'Track shift logged' + (back ? ' for ' + shortDateLabel(ts) : '') + ' — ' + hrs + 'h';
     if (tips) msg += ', $' + tips + ' tips';
     msg += ' · take-home $' + pay.takeHome.toFixed(2)
          + ' ($' + pay.effectiveHourly.toFixed(2) + '/hr)';
@@ -343,7 +386,8 @@ function handleTip(ss, sub_route, data) {
     var inStr  = to12h(data.clock_in);
     var outStr = to12h(data.clock_out);
     getTab(ss, 'Susans').appendRow([ts, inStr, outStr, hrs, pay, data.notes || '']);
-    return 'Susans logged — ' + (inStr || '?') + ' to ' + (outStr || '?') + ', ' + pay + ' pay';
+    return 'Susans logged' + (back ? ' for ' + shortDateLabel(ts) : '') + ' — '
+         + (inStr || '?') + ' to ' + (outStr || '?') + ', ' + pay + ' pay';
   }
 }
 

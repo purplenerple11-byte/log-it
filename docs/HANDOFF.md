@@ -16,7 +16,7 @@ capital M).
 PWA (index.html, GitHub Pages)
   → fetch POST text/plain (avoids CORS preflight)
     → Google Apps Script Web App  ("Execute as: Me", access: Anyone)
-       source of truth in repo: server/routerWebApp.gs (v4.6) +
+       source of truth in repo: server/routerWebApp.gs (v4.7) +
          server/tipRouting.js + server/trackPay.js (pasted alongside it as
          additional files in the SAME Apps Script project — same project,
          NOT separate ones; Apps Script shares one global scope per project)
@@ -92,7 +92,7 @@ PWA (index.html, GitHub Pages)
 ## Testing (browser-only, no CLI runner)
 
 - In-page harness: serve repo (`python3 -m http.server 8777`) and open
-  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 120 passed, 0
+  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 137 passed, 0
   failed.** Any change must keep it green; new features add tests there.
   Tests live in `tests.js`; `index.html` injects it only when `?test=1` is
   set, so production never fetches it. The harness reads production globals
@@ -261,6 +261,23 @@ PWA (index.html, GitHub Pages)
       green). Test count: 108 → 125.
     - `lineFor(date, lines)` kept its exact signature — `index.html` was not
       touched.
+
+18. **Shift date extraction** (router v4.7). The pay week used to come from
+    `now()`, so a shift logged after the fact landed in the wrong week and was
+    taxed as a fresh one. It bit twice in ten days: a Sunday 7/26 shift logged
+    Monday, and a Sunday 8/2 shift logged Wednesday 8/5 — each ~$23 too high.
+    Gemini now fills `shift_date` when the entry names a day ("yesterday",
+    "Sunday", "Aug 2"), the current date is appended to SYSTEM_PROMPT per
+    request so relative dates resolve, and the row is stamped with the shift
+    date so `sumTrackHours` buckets it right. `resolveShiftDate` (tipRouting)
+    is almost entirely guard: exact `YYYY-MM-DD` only, must be a real calendar
+    date, no future dates, nothing older than 45 days — otherwise fall back to
+    today and log why. Verified a naive resolver accepts all six bad inputs
+    (future, year-old, Feb 30, wrong format) while this one accepts none.
+    Back-dated shifts are echoed on the card ("logged for Sun Aug 2") so a
+    misread day is visible rather than silent. 12 new tests.
+    Also: the simulated flow for the real 8/2 entry reproduced the row that had
+    been hand-entered, to the penny — 147.36 / 111.86 / 353.86 / 38.59.
 
 ## Key facts (don't re-litigate)
 
