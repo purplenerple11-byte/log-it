@@ -87,7 +87,16 @@ and `server/trackPay.js` (→ `trackPay.gs`, Track wage + withholding).
   filing-status change, or new tax year; `TRACK_WAGE_RATE` also needs editing on a raise.
   Withholding is progressive and assessed weekly, so a shift's net is its **incremental**
   contribution to the Mon-Sun pay week — which means `handleTip` must sum the week's existing
-  Track hours **before** appending the new row, or the shift counts itself. Taxing a shift in
+  Track hours **before** appending the new row, or the shift counts itself. **The pay week comes
+  from the day the shift HAPPENED, not the day it was logged** (v4.7): Gemini fills `shift_date`
+  when the entry names a day ("yesterday", "Sunday", "Aug 2"), `resolveShiftDate` in
+  `server/tipRouting.js` validates it, and the row is stamped with that date so `sumTrackHours`
+  buckets it correctly. Logging Sunday's shift on Wednesday used to treat it as a fresh week and
+  overstate the net by ~$23. `resolveShiftDate` is all guard — it rejects anything that is not an
+  exact `YYYY-MM-DD`, is not a real calendar date, is in the future, or is older than 45 days, and
+  falls back to today, because a wrong date misfiles the shift silently. Back-dated shifts are
+  echoed on the confirmation card ("logged for Sun Aug 2") so a misread day is visible.
+  Meal/idea/car still use the log time; only tip entries carry a shift date. Taxing a shift in
   isolation understates withholding by ~$20/shift; a test guards against collapsing to that.
   Track columns are `A-E` as before plus `F Gross Wage | G Est. Net Wage | H Total Take-Home |
   I Eff. $/hr`. It's an estimate for planning, not a tax document.
