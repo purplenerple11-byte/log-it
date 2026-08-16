@@ -119,8 +119,19 @@ under `?mock=1`.
 - **A test that only asserts "it throws" can pass with no implementation at all** — calling an
   undefined name throws `ReferenceError`, which a bare `try/catch` swallows happily. Three such
   tests were vacuously green here. Assert on the refusal *message*.
-- **Apps Script does not auto-sync.** `server/routerWebApp.gs` is the source of truth by convention
-  only; the user's Apps Script editor is the actual runtime. After any server change, remind the
+- **Apps Script does not auto-sync, and its filenames differ from the repo's.** The live project
+  is "Log It - Router" (Drive id `1Np9nv59S7Zuu4r-ABdXUPCEtZDRFAuYcAu5cfgcNfM8_GDVAIb1guZpV`)
+  and its files are `Code` ← `server/routerWebApp.gs`, `tipRouter` ← `server/tipRouting.js`,
+  `trackPay`, and as of v4.8 `readApi` and `sheetWrite`. **Paste into the existing file names.**
+  Adding a `routerWebApp` beside the existing `Code` would put two `doPost` definitions in one
+  project, and Apps Script shares one global scope per project, so whichever loads last silently
+  wins. `server/routerWebApp.gs` is the source of truth by convention
+  only; the user's Apps Script editor is the actual runtime.
+  **Claude can read the live project** (Drive `download_file_content` with
+  `exportMimeType: application/vnd.google-apps.script+json` returns base64 of a
+  `{files:[{name,type,source}]}` bundle) — useful for diffing live against the repo before and
+  after a paste. It **cannot write or deploy**: Drive's `update_file` is metadata-only, and
+  versioning a deployment needs the Apps Script API, which isn't available here. After any server change, remind the
   user to paste it in and publish — nothing happens otherwise. Publishing means **Deploy →
   Manage deployments → pencil → Version: New version**, *not* "New deployment": a new
   deployment mints a fresh `/exec` URL, and the current one is baked into `CFG_DEFAULTS`,
