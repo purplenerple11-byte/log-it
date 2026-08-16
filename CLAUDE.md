@@ -14,6 +14,10 @@ python3 -m http.server 8777        # serve the repo root; open http://localhost:
 python3 tools/make-icons.py        # regenerate icons/ (stdlib only, by design)
 ```
 
+- **Seeing the read pages without a deploy:** `shifts.html?mock=1` / `ideas.html?mock=1` load the
+  real server modules and run the actual sheet rows in `mockSheet.js` through them, so the whole
+  read pipeline is exercised with no Apps Script publish and no token. Writes are simulated
+  locally and say so. Both are inert without the URL param.
 - **Tests:** open `index.html?test=1`. The harness hides the app, runs everything, and appends a
   `<pre>` with PASS/FAIL lines and a `N passed, N failed` footer. Read it via
   `document.querySelector('pre').textContent`. Must stay green; new features add tests to `tests.js`.
@@ -41,12 +45,18 @@ index.html (PWA, GitHub Pages)
   ← confirmation card
 ```
 
-Six files carry the whole system: `index.html` (~1240 lines, app + styles + logic, no framework),
+The logging path is six files: `index.html` (~1260 lines, app + styles + logic, no framework),
 `daily.js` (the daily line's content list + pure selectors — production, loaded on every page view),
 `tests.js` (harness, injected only under `?test=1`), `server/routerWebApp.gs` (the router), and two
 pure server modules pasted into Apps Script as additional files and pulled into the browser only
 under `?test=1` so they can be tested: `server/tipRouting.js` (→ `tipRouting.gs`, tip-tab routing)
 and `server/trackPay.js` (→ `trackPay.gs`, Track wage + withholding).
+
+The **read pages** (v4.8) sit alongside it and share nothing but `theme.css` and the router URL:
+`shifts.html` + `shiftStats.js`, `ideas.html` + `ideaModel.js`, both on `dataClient.js`, plus two
+more server modules `server/readApi.js` (→ `readApi.gs`) and `server/sheetWrite.js`
+(→ `sheetWrite.gs`). `mockSheet.js` is a dev fixture holding the real sheet rows, loaded only
+under `?mock=1`.
 
 ### Invariants — these are load-bearing, don't undo them
 
@@ -103,6 +113,12 @@ and `server/trackPay.js` (→ `trackPay.gs`, Track wage + withholding).
 - **Source-inspecting tests must fetch through `fetchText`/`fetchJson`.** They append a
   per-run cache-buster. Without it the browser serves a cached copy and the test silently
   validates the *previous* version of the file — it once reported the v4.5 router as v4.4.
+  The `?test=1` `<script>` injector cache-busts for the same reason: it didn't, and a run
+  reported `137 passed, 0 failed` against a `tests.js` that had 22 new tests in it. **A green
+  suite whose count didn't change after you added tests is not green, it's stale.**
+- **A test that only asserts "it throws" can pass with no implementation at all** — calling an
+  undefined name throws `ReferenceError`, which a bare `try/catch` swallows happily. Three such
+  tests were vacuously green here. Assert on the refusal *message*.
 - **Apps Script does not auto-sync.** `server/routerWebApp.gs` is the source of truth by convention
   only; the user's Apps Script editor is the actual runtime. After any server change, remind the
   user to paste it in and publish — nothing happens otherwise. Publishing means **Deploy →
@@ -127,6 +143,37 @@ and `server/trackPay.js` (→ `trackPay.gs`, Track wage + withholding).
   repeat. Every new `DAILY_LINES` entry must be unattributed (no `author` field) — two existing
   attributed quotes turned out to be misattributed and had to be removed; don't reintroduce that
   risk at scale.
+- **Reads must never take the script lock, and the token must never gate logging.** `doPost`
+  dispatches on `op` (absent/`log` = the original path, plus `read`/`patch`/`delete`). The log path
+  holds the script lock for its whole request to make retries idempotent, and runs of 82s/107s/268s
+  are on record — so a read holding that lock would block logging a shift for that long. The read
+  branch returns *before* `LockService` is touched; `patch`/`delete` do take it, since they mutate.
+  Equally load-bearing in the other direction: `requireReadToken` is only ever called inside the
+  op branches, never on the way to Gemini, so a wrong or missing key can't stop a log. Tests assert
+  both orderings against the `.gs` source. `tokenMatches` **fails closed when `READ_TOKEN` is
+  unset** — a plain equality check would compare `''` to `''` and turn a forgotten setup step into
+  a public feed of income history and ideas.
+- **Track's take-home and Susans' pay are different units and must never be summed.** Track's
+  figure is net of withholding plus tips; Susans' $20/hr is gross, with no withholding modeled.
+  This was violated once already *in the chart* while the totals were correct — Susans gross was
+  stacked on Track net under a legend reading "Net wage". The chart now plots one venue at a time.
+  Susans is finished; the next job (bartending or cooking) will need its own wage rate and a
+  withholding line re-fit to a real paystub, which is why shifts travel as one list carrying
+  `venue` and an **optional** `pay` block rather than per-venue arrays.
+- **Sheet columns are located by header name, never by letter.** `handleIdea` writes `''` into
+  Materials columns E and F on the assumption they were spare; they are `Price` and `Notes`,
+  filled in by hand. `columnForHeader` returns -1 and callers fail loudly naming the header they
+  wanted. Ideas rows are identified by their column-A timestamp, materials by timestamp **plus**
+  item (every material of one idea shares that idea's timestamp), falling back to project + item
+  when the timestamp is blank — one live row is — and **refusing to write when that is ambiguous**.
+  Never a row index: sorting or deleting in Sheets renumbers everything below.
+- **Deleting a Track row invalidates the rest of its pay week.** Withholding is incremental within
+  the Mon–Sun week, so the survivors' stored net was computed as though the deleted shift's hours
+  were present. `recomputeTrackWeek` rewrites them — the automated form of the hand cleanup on
+  2026-07-27, where a survivor was left $23.37 too high. The same `recomputeWeek` fills in the 16
+  pre-v4.5 rows at read time, for display only.
+- **A blank Ideas `Status` cell reads as Active.** That is what let 25 existing rows work with no
+  backfill write; don't "fix" it by stamping Active into the sheet.
 - **All paths must stay relative.** `start_url`/`scope` in `manifest.json`, the `tests.js` injection,
   and icon hrefs have to resolve under the `/log-it/` Pages subpath, not the domain root. A test
   guards the manifest.

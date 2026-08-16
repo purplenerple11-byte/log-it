@@ -1,4 +1,4 @@
-# Log It — Session Handoff (2026-08-05)
+# Log It — Session Handoff (2026-08-16)
 
 Read this first. It's the state of the project, how we work, and what's next.
 
@@ -92,7 +92,7 @@ PWA (index.html, GitHub Pages)
 ## Testing (browser-only, no CLI runner)
 
 - In-page harness: serve repo (`python3 -m http.server 8777`) and open
-  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 137 passed, 0
+  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 214 passed, 0
   failed.** Any change must keep it green; new features add tests there.
   Tests live in `tests.js`; `index.html` injects it only when `?test=1` is
   set, so production never fetches it. The harness reads production globals
@@ -278,6 +278,52 @@ PWA (index.html, GitHub Pages)
     misread day is visible rather than silent. 12 new tests.
     Also: the simulated flow for the real 8/2 entry reproduced the row that had
     been hand-entered, to the penny — 147.36 / 111.86 / 353.86 / 38.59.
+
+19. **Read/interact front end** (router v4.8, branch `feat/read-front-end`).
+    Two new pages — `shifts.html` (earnings trends + a filterable, tappable
+    shift log) and `ideas.html` (browse, Active/Done/Archived, edit next step,
+    tick off materials and record their price). Spec:
+    `docs/specs/2026-08-16-read-front-end-design.md`.
+    - **Reading the live sheets first killed three design assumptions.**
+      Materials columns E/F are `Price`/`Notes`, hand-maintained — not the
+      spare columns `handleIdea` writes `''` into. 16 of 33 Track rows predate
+      v4.5 and carry no pay at all. One Materials row was hand-added with a
+      blank timestamp, which is the identity the patch path needs. Every one of
+      those changed the design. **Read the sheet before designing against it.**
+    - `doPost` dispatches on `op`; reads answer before any lock, the token
+      gates read/patch/delete only, and `tokenMatches` fails closed when
+      `READ_TOKEN` is unset. See the invariants in CLAUDE.md.
+    - `recomputeWeek` reproduces the stored week of 2026-07-20 **to the penny**
+      (145.11/132.78/482.78/53.46 and the three rows after), which is what
+      justifies using it to fill in the 16 unpriced rows for display.
+    - Delete re-verifies the row against what the page displayed, then repairs
+      the pay week — automating the 2026-07-27 hand cleanup.
+    - **Two process failures worth remembering.** (a) The suite reported
+      `137 passed, 0 failed` against a cached `tests.js` holding 22 new tests;
+      the `?test=1` script injector now cache-busts like `fetchText` always
+      did. (b) Three tests asserting only "it throws" were vacuously green,
+      because an undefined function throws `ReferenceError` too.
+    - **A bug 198 passing tests had nothing to say about:** the chart stacked
+      Susans' gross on Track's net under a "Net wage" legend. Found by looking
+      at the rendered page. It plots one venue at a time now.
+    - `?mock=1` on either page runs the real sheet rows through the real server
+      modules — no deploy, no token. That is how both pages were verified.
+    - **214 passed, 0 failed.** Not pushed. **Needs the user's setup steps
+      below before it does anything against the live sheets.**
+
+## Setup the user must do for v4.8
+
+1. Ideas tab: add a **`Status`** header in column H. Leave every cell blank —
+   blank reads as Active by design, so nothing is backfilled.
+2. Materials tab: add a **`Got it`** header in column G.
+3. Apps Script → Project Settings → Script Properties: add
+   **`READ_TOKEN`** = a long random string. Save it somewhere; clearing phone
+   storage means re-entering it. Until it is set, every read is denied (that
+   is deliberate — it fails closed).
+4. Paste `readApi.gs` and `sheetWrite.gs` as new files, update
+   `routerWebApp.gs`, then **Deploy → Manage deployments → pencil → Version:
+   New version**. Not "New deployment".
+5. Open the Shifts page on the phone and paste the token when asked.
 
 ## Key facts (don't re-litigate)
 
