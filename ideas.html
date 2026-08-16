@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#121316">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="theme.css">
+  <title>Ideas — Log It</title>
+  <style>
+    .idea { background: var(--surface); border-radius: 11px; padding: 13px; margin-bottom: 9px; }
+    .idea.busy { opacity: 0.5; }
+    .idea .hd { display: flex; gap: 9px; align-items: flex-start; }
+    .idea .t { flex: 1; font-size: 14.5px; line-height: 1.35; }
+    .idea.done .t, .idea.arch .t { color: var(--dim); }
+    .idea.done .t { text-decoration: line-through; }
+    .status {
+      border: 0.5px solid var(--border); background: transparent; color: var(--dim);
+      border-radius: 999px; padding: 4px 10px; font-size: 11px; font-family: inherit;
+      cursor: pointer; white-space: nowrap;
+    }
+    .status.Active { border-color: var(--action); color: var(--action); }
+    .meta { font-size: 11px; color: var(--dim); margin-top: 7px; }
+    .dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; margin-right: 3px; }
+    .next {
+      margin-top: 10px; padding-top: 10px; border-top: 0.5px solid var(--border);
+      font-size: 12px; color: var(--dim); cursor: pointer;
+    }
+    .next b { color: var(--text); font-weight: 400; }
+    .mats { margin-top: 10px; padding-top: 6px; border-top: 0.5px solid var(--border); }
+    .mat {
+      display: flex; align-items: center; gap: 9px; padding: 6px 0;
+      font-size: 12.5px; cursor: pointer;
+    }
+    .mat .box {
+      width: 16px; height: 16px; border-radius: 4px; flex: none;
+      border: 1.5px solid var(--dim); display: flex; align-items: center;
+      justify-content: center; font-size: 11px; color: #121316;
+    }
+    .mat.got .box { background: var(--green); border-color: var(--green); }
+    .mat.got .nm { color: var(--dim); text-decoration: line-through; }
+    .mat .px { margin-left: auto; color: var(--dim); font-size: 11.5px; }
+    .spend { font-size: 11px; color: var(--dim); margin-top: 8px; }
+    .sortbar { display: flex; gap: 6px; margin: 0 0 12px; font-size: 12px; color: var(--dim); align-items: center; }
+    .sortbar button {
+      background: none; border: none; color: var(--dim); font-family: inherit;
+      font-size: 12px; cursor: pointer; padding: 4px 6px; border-radius: 6px;
+    }
+    .sortbar button[aria-pressed="true"] { color: var(--action); }
+  </style>
+</head>
+<body>
+
+<div class="top">
+  <a class="back" href="index.html" aria-label="Back to Log It">&#8249;</a>
+  <h1>Ideas</h1>
+  <span class="stamp" id="stamp"></span>
+</div>
+
+<div id="gate" class="gate" hidden>
+  <p>This one needs your read key. It lives in Apps Script under
+     <code>READ_TOKEN</code>, and is stored on this device only.</p>
+  <input id="key" type="password" autocomplete="off" placeholder="Read key">
+  <button id="key-save">Unlock</button>
+</div>
+
+<div id="main" hidden>
+  <div class="chips" id="chips" role="group" aria-label="Status"></div>
+  <div class="sortbar">
+    <span>Sort</span>
+    <button data-sort="newest" aria-pressed="true">Newest</button>
+    <button data-sort="excitement" aria-pressed="false">Most excited</button>
+  </div>
+  <div id="list"></div>
+  <div id="orphans"></div>
+</div>
+
+<div id="boot" class="msg">
+  <div class="skeleton" style="width:70%;margin:0 auto 14px"></div>
+  <div class="skeleton" style="width:90%;margin:0 auto 14px"></div>
+  <div class="skeleton" style="width:60%;margin:0 auto"></div>
+</div>
+
+<script src="ideaModel.js"></script>
+<script src="dataClient.js"></script>
+<script>
+const MOCK = new URLSearchParams(location.search).get('mock') === '1';
+
+let IDEAS = [];
+let ORPHANS = [];
+let filter = 'Active';
+let sortMode = 'newest';
+let busy = null;
+// Ideas whose status you just changed stay on screen even though they no
+// longer match the filter. Without this, one tap on Active sends the card
+// away instantly: you can never reach Archived from the Active list, and a
+// mistap disappears before you can see it. Cleared when you switch filters.
+let stuck = new Set();
+
+const $ = (id) => document.getElementById(id);
+const STATES = ['Active', 'Done', 'Archived'];
+
+function renderChips() {
+  const c = statusCounts(IDEAS);
+  $('chips').innerHTML = STATES.map((s) =>
+    '<button class="chip" data-status="' + s + '" aria-pressed="' + (filter === s) + '">'
+    + s + ' ' + c[s] + '</button>').join('');
+  document.querySelectorAll('.chip').forEach((el) => {
+    el.onclick = () => { filter = el.dataset.status; stuck = new Set(); render(); };
+  });
+}
+
+function render() {
+  renderChips();
+  const base = filterIdeas(IDEAS, filter);
+  const held = IDEAS.filter((i) => stuck.has(keyOf(i)) && base.indexOf(i) === -1);
+  const shown = sortIdeas(base.concat(held), sortMode);
+
+  $('list').innerHTML = shown.length
+    ? shown.map((i) => ideaHtml(i)).join('')
+    : '<div class="msg">Nothing ' + filter.toLowerCase() + '</div>';
+
+  // A material whose idea no longer exists would otherwise vanish from the
+  // page entirely, taking whatever the user wrote about it with it.
+  $('orphans').innerHTML = ORPHANS.length
+    ? '<div class="msg" style="text-align:left">' + ORPHANS.length
+      + ' material(s) belong to no idea: '
+      + ORPHANS.map((m) => escapeHtml(m.item)).join(', ') + '</div>'
+    : '';
+
+  document.querySelectorAll('.status').forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); cycleStatus(el.dataset.key); };
+  });
+  document.querySelectorAll('.mat').forEach((el) => {
+    el.onclick = () => toggleMaterial(el.dataset.key, el.dataset.item);
+  });
+  document.querySelectorAll('.next').forEach((el) => {
+    el.onclick = () => editNextStep(el.dataset.key);
+  });
+  document.querySelectorAll('.px').forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); editPrice(el.dataset.key, el.dataset.item); };
+  });
+}
+
+function keyOf(i) { return i.ts ? i.ts.toISOString() : 'title:' + i.title; }
+
+function ideaHtml(i) {
+  const key = keyOf(i);
+  const dots = [1, 2, 3, 4, 5].map((v) =>
+    '<span class="dot" style="background:' + (v <= (i.excitement || 0) ? 'var(--action)' : 'var(--border)') + '"></span>'
+  ).join('');
+  const spend = ideaSpend(i);
+  const cls = i.status === 'Done' ? ' done' : i.status === 'Archived' ? ' arch' : '';
+
+  let h = '<div class="idea' + cls + (busy === key ? ' busy' : '') + '">'
+    + '<div class="hd"><div class="t">' + escapeHtml(i.title) + '</div>'
+    + '<button class="status ' + i.status + '" data-key="' + escapeHtml(key) + '">'
+    + i.status + '</button></div>'
+    + '<div class="meta">' + escapeHtml(i.category || '—') + ' · '
+    + escapeHtml(i.effort || '—') + ' · ' + dots + '</div>';
+
+  if (i.nextStep) {
+    h += '<div class="next" data-key="' + escapeHtml(key) + '">Next: <b>'
+      + escapeHtml(i.nextStep) + '</b></div>';
+  }
+
+  if (i.materials.length) {
+    h += '<div class="mats">' + i.materials.map((m) =>
+      '<div class="mat' + (m.acquired ? ' got' : '') + '" data-key="' + escapeHtml(key)
+      + '" data-item="' + escapeHtml(m.item) + '">'
+      + '<span class="box">' + (m.acquired ? '&#10003;' : '') + '</span>'
+      + '<span class="nm">' + escapeHtml(m.item) + '</span>'
+      + '<span class="px" data-key="' + escapeHtml(key) + '" data-item="' + escapeHtml(m.item) + '">'
+      + (m.price == null ? 'add price' : money(m.price)) + '</span></div>').join('') + '</div>';
+    if (spend != null) h += '<div class="spend">' + money(spend) + ' spent so far</div>';
+  }
+  return h + '</div>';
+}
+
+function findIdea(key) { return IDEAS.find((i) => keyOf(i) === key); }
+
+// ---------------------------------------------------------------
+// WRITES — optimistic, reverted if the server refuses
+// ---------------------------------------------------------------
+async function send(key, body, apply, revert) {
+  apply();
+  busy = key;
+  render();
+  if (MOCK) { busy = null; setStamp('changed (mock — nothing was written)'); render(); return; }
+  try {
+    await patchField(body);
+    busy = null;
+    setStamp('saved');
+    render();
+  } catch (err) {
+    // Put it back: the sheet is the source of truth, and a page showing a
+    // change that did not happen is worse than no change at all.
+    revert();
+    busy = null;
+    setStamp('');
+    render();
+    alert(err.message);
+  }
+}
+
+function cycleStatus(key) {
+  const i = findIdea(key);
+  if (!i) return;
+  const was = i.status;
+  const now = nextStatus(was);
+  stuck.add(key);
+  send(key, {
+    target: 'idea', ts: i.ts ? i.ts.toISOString() : null,
+    field: 'status', value: now, sheet_ids: { idea: sheetId('idea', '') }
+  }, () => { i.status = now; }, () => { i.status = was; });
+}
+
+function editNextStep(key) {
+  const i = findIdea(key);
+  if (!i) return;
+  const was = i.nextStep;
+  const next = prompt('Next step', was);
+  if (next === null || next === was) return;
+  send(key, {
+    target: 'idea', ts: i.ts ? i.ts.toISOString() : null,
+    field: 'next_step', value: next, sheet_ids: { idea: sheetId('idea', '') }
+  }, () => { i.nextStep = next; }, () => { i.nextStep = was; });
+}
+
+function toggleMaterial(key, item) {
+  const i = findIdea(key);
+  const m = i && i.materials.find((x) => x.item === item);
+  if (!m) return;
+  const was = m.acquired;
+  send(key, {
+    target: 'material', ts: m.ts ? m.ts.toISOString() : null,
+    project: m.project, item: m.item, field: 'acquired', value: !was,
+    sheet_ids: { idea: sheetId('idea', '') }
+  }, () => { m.acquired = !was; }, () => { m.acquired = was; });
+}
+
+function editPrice(key, item) {
+  const i = findIdea(key);
+  const m = i && i.materials.find((x) => x.item === item);
+  if (!m) return;
+  const was = m.price;
+  const raw = prompt('Price for ' + item, was == null ? '' : String(was));
+  if (raw === null) return;
+  const trimmed = raw.trim();
+  const value = trimmed === '' ? '' : Number(trimmed.replace(/[$,\s]/g, ''));
+  if (value !== '' && !isFinite(value)) { alert('That is not a number'); return; }
+  send(key, {
+    target: 'material', ts: m.ts ? m.ts.toISOString() : null,
+    project: m.project, item: m.item, field: 'price', value: value,
+    sheet_ids: { idea: sheetId('idea', '') }
+  }, () => { m.price = value === '' ? null : value; }, () => { m.price = was; });
+}
+
+// ---------------------------------------------------------------
+// LOAD
+// ---------------------------------------------------------------
+function setStamp(text, isBusy) {
+  $('stamp').textContent = text;
+  $('stamp').className = 'stamp' + (isBusy ? ' busy' : '');
+}
+
+function show(which) {
+  $('boot').hidden = which !== 'boot';
+  $('gate').hidden = which !== 'gate';
+  $('main').hidden = which !== 'main';
+}
+
+function accept(data, fresh) {
+  const grouped = groupMaterials(hydrateIdeas(data.ideas), hydrateMaterials(data.materials));
+  IDEAS = grouped.ideas;
+  ORPHANS = grouped.orphans;
+  show('main');
+  setStamp(fresh ? '' : 'as of ' + timeLabel(new Date(data.fetched_at)), !fresh);
+  render();
+}
+
+function load() {
+  if (MOCK) { accept(mockIdeasResponse(), true); return; }
+
+  loadScope('ideas', { idea: sheetId('idea', '') }, accept, (err, hadCache) => {
+    if (err.kind === 'unauthorized' && !hadCache) { show('gate'); return; }
+    setStamp(hadCache ? 'offline — showing last known' : err.message);
+    if (!hadCache) { show('main'); $('list').innerHTML = '<div class="msg">' + escapeHtml(err.message) + '</div>'; }
+  });
+}
+
+document.querySelectorAll('.sortbar button').forEach((b) => {
+  b.onclick = () => {
+    sortMode = b.dataset.sort;
+    document.querySelectorAll('.sortbar button').forEach((x) =>
+      x.setAttribute('aria-pressed', String(x.dataset.sort === sortMode)));
+    render();
+  };
+});
+
+$('key-save').onclick = () => {
+  const v = $('key').value.trim();
+  if (!v) return;
+  setReadToken(v);
+  show('boot');
+  load();
+};
+
+if (MOCK) {
+  let left = 3;
+  for (const src of ['server/trackPay.js', 'server/readApi.js', 'mockSheet.js']) {
+    const el = document.createElement('script');
+    el.src = src + '?cb=' + Date.now();
+    el.async = false;
+    el.onload = () => { if (--left === 0) load(); };
+    document.head.appendChild(el);
+  }
+} else {
+  load();
+}
+</script>
+</body>
+</html>

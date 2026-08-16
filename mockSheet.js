@@ -68,10 +68,73 @@ const MOCK_SUSANS_ROWS = [
   [new Date(2026, 6, 15, 8, 41, 56),  '2:00 PM', '4:00 PM', 2,    '$40.00',  '']
 ];
 
+// The real Ideas rows. Status is shown here as the column WILL look once the
+// header is added — blank on every existing row, which is the point: nothing
+// is backfilled, and a blank cell reads as Active.
+const MOCK_IDEA_ROWS = [
+  ['Timestamp', 'Title', 'Category', 'Effort', 'Excitement (1-5)', 'Next Step', 'Tags', 'Status'],
+  [new Date(2026, 5, 11, 16, 10, 43), 'Magnetic Repulsion Interactive Art Piece', 'Creative', 'Medium Project', 4, 'Research magnetic materials and repulsion mechanics', 'art,magnets,interactive,physics', ''],
+  [new Date(2026, 5, 11, 17, 15, 26), 'Repair the shop vac', 'Personal', 'Quick Win', 3, 'Purchase a new hose', 'repair, maintenance, shop vac', ''],
+  [new Date(2026, 5, 11, 19, 25, 37), 'Deep clean and restore my shoes', 'Personal', 'Quick Win', 3, 'Gather cleaning supplies and scrub shoes', 'cleaning, maintenance, shoes', ''],
+  [new Date(2026, 5, 12, 9, 40, 53), 'Get a haircut with Melanie', 'Personal', 'Quick Win', 3, 'Schedule appointment with Melanie', 'personal, grooming', ''],
+  [new Date(2026, 5, 12, 9, 43, 25), 'Develop and launch coffee website', 'Business', 'Medium Project', 3, 'Purchase shipping boxes', 'coffee, website, e-commerce', ''],
+  [new Date(2026, 5, 15, 12, 1, 17), 'Automated coffee and content trend reporter', 'Creative', 'Medium Project', 5, 'Ask Claude for implementation strategy', 'automation, content, AI, coffee', ''],
+  [new Date(2026, 5, 16, 12, 6, 41), 'Try out the new lifting straps', 'Personal', 'Quick Win', 3, 'Use straps during next workout', 'fitness, lifting', ''],
+  [new Date(2026, 5, 18, 9, 12, 24), 'Obtain Business IRS Tax Identification Number', 'Business', 'Quick Win', 3, 'Call or visit the IRS website: 1-800-829-4933', 'business, taxes, legal', ''],
+  [new Date(2026, 5, 18, 9, 28, 37), 'Get new shoes for track season', 'Personal', 'Quick Win', 3, 'Research and purchase track shoes', 'track, sports, gear', ''],
+  [new Date(2026, 5, 18, 9, 35, 28), 'Organize my room with new storage', 'Personal', 'Medium Project', 3, 'Go to Target to buy organizers', 'organization, room, storage', ''],
+  [new Date(2026, 5, 18, 9, 49, 59), 'Purchase and use an immersion blender', 'Personal', 'Quick Win', 3, 'Research and purchase an immersion blender', 'kitchen, cooking, tools', ''],
+  [new Date(2026, 5, 19, 8, 18, 43), 'Research stocks for AI data centers', 'Money', 'Medium Project', 4, 'Research solar and power infrastructure stocks', 'stocks, AI, data centers, solar, energy', ''],
+  [new Date(2026, 5, 19, 11, 55, 6), 'Buy DeWalt drill for existing batteries', 'Personal', 'Quick Win', 4, 'Look online for compatible DeWalt drill', 'tools,dewalt,hardware', ''],
+  [new Date(2026, 5, 23, 12, 0, 45), 'Change digest timing for gym schedule', 'Personal', 'Quick Win', 3, 'Adjust digest settings to 9:15am', 'automation, schedule, gym', ''],
+  [new Date(2026, 5, 24, 7, 3, 57), 'Build custom wooden oil bottle holders', 'Creative', 'Medium Project', 3, 'Cut small wooden strips', 'woodworking, organization', ''],
+  [new Date(2026, 5, 25, 5, 48, 26), 'Buy kitchen torch for creme brulee', 'Personal', 'Quick Win', 3, 'Purchase kitchen torch', 'cooking, kitchen, dessert', ''],
+  [new Date(2026, 5, 25, 9, 10, 9), 'Purchase squeezable and pourable syrup bottles', 'Personal', 'Quick Win', 3, 'Find and purchase syrup bottles', 'kitchen, organization', ''],
+  [new Date(2026, 6, 7, 12, 41, 28), 'Switch to safety razor for savings', 'Money', 'Quick Win', 4, 'Research and purchase a safety razor', 'savings, grooming, personal finance', ''],
+  [new Date(2026, 6, 14, 11, 26, 42), 'Buy Azzaro Most Wanted Elixir', 'Personal', 'Quick Win', 3, 'Look on eBay', 'fragrance, shopping', ''],
+  [new Date(2026, 6, 15, 9, 26, 23), 'Deposit coins and cancel bank appointment', 'Personal', 'Quick Win', 1, 'Go to bank and call to cancel appointment', 'errands, banking', ''],
+  [new Date(2026, 6, 17, 15, 1, 9), 'Purchase DCD800 drill for shop projects', 'Personal', 'Quick Win', 4, 'Check eBay and Facebook Marketplace for listings', 'tools, shop, equipment', ''],
+  [new Date(2026, 6, 23, 8, 42, 39), 'Buy a cable for my piano', 'Creative', 'Quick Win', 3, 'Look on Amazon for a piano cable', 'music, piano, gear', ''],
+  [new Date(2026, 6, 27, 15, 45, 30), 'Buy fly tape for the garage', 'Personal', 'Quick Win', 1, 'Purchase fly tape', 'garage, maintenance', ''],
+  [new Date(2026, 7, 1, 21, 9, 25), 'Buy sun block for work', 'Personal', 'Quick Win', 1, 'Purchase sun block', 'work,supplies', ''],
+  [new Date(2026, 7, 14, 8, 0, 27), 'Get better toothbrush holder for wall', 'Personal', 'Quick Win', 2, 'Search for wall-mounted toothbrush holders', 'home, organization', '']
+];
+
+const MOCK_MATERIAL_ROWS = [
+  ['Timestamp', 'Project', 'Item', 'Category', 'Price', 'Notes', 'Got it'],
+  [new Date(2026, 5, 11, 17, 15, 26), 'Repair the shop vac', 'hose', 'Parts', 0, 'Part At Home', ''],
+  [new Date(2026, 5, 12, 9, 43, 25), 'Develop and launch coffee website', 'shipping boxes', 'Supplies', '', '', ''],
+  [new Date(2026, 5, 18, 9, 28, 37), 'Get new shoes for track season', 'track shoes', 'Other', 57.42, 'ebay', ''],
+  [new Date(2026, 5, 18, 9, 35, 28), 'Organize my room with new storage', 'organizers', 'Supplies', 22.47, '2 fabric shelf box, 2 plastic organizers', ''],
+  // Hand-added with no timestamp — matched to its idea by project title.
+  ['', 'Purchase and use an immersion blender', 'immersion blender', 'Tools', 26.3, '', ''],
+  [new Date(2026, 5, 19, 11, 55, 6), 'Buy DeWalt drill for existing batteries', 'DeWalt drill', 'Tools', '', '', ''],
+  [new Date(2026, 5, 24, 7, 3, 57), 'Build custom wooden oil bottle holders', 'wooden strips', 'Supplies', '', '', ''],
+  [new Date(2026, 5, 25, 5, 48, 26), 'Buy kitchen torch for creme brulee', 'kitchen torch', 'Tools', '', '', ''],
+  [new Date(2026, 5, 25, 9, 10, 9), 'Purchase squeezable and pourable syrup bottles', 'squeezable and pourable syrup bottles', 'Supplies', 9, '', ''],
+  [new Date(2026, 6, 7, 12, 41, 28), 'Switch to safety razor for savings', 'safety razor', 'Other', 51.31, 'Ebay new', ''],
+  [new Date(2026, 6, 14, 11, 26, 42), 'Buy Azzaro Most Wanted Elixir', 'Azzaro Most Wanted Elixir', 'Other', '', '', ''],
+  [new Date(2026, 6, 17, 15, 1, 9), 'Purchase DCD800 drill for shop projects', 'DCD800 drill', 'Tools', '', '', ''],
+  [new Date(2026, 6, 23, 8, 42, 39), 'Buy a cable for my piano', 'piano cable', 'Parts', 10.69, 'Amazon', ''],
+  [new Date(2026, 6, 27, 15, 45, 30), 'Buy fly tape for the garage', 'fly tape', 'Supplies', '', '', ''],
+  [new Date(2026, 7, 1, 21, 9, 25), 'Buy sun block for work', 'sun block lotion', 'Supplies', '', '', ''],
+  [new Date(2026, 7, 14, 8, 0, 27), 'Get better toothbrush holder for wall', 'toothbrush holder', 'Supplies', '', '', '']
+];
+
 // Mirrors handleRead('shifts') exactly, using the real server functions.
 function mockShiftsResponse() {
   const shifts = readTrackShifts(MOCK_TRACK_ROWS).concat(readSusansShifts(MOCK_SUSANS_ROWS));
   fillMissingPay(shifts);
   markDuplicates(shifts);
   return { success: true, fetched_at: new Date().toISOString(), shifts };
+}
+
+// Mirrors handleRead('ideas').
+function mockIdeasResponse() {
+  return {
+    success: true,
+    fetched_at: new Date().toISOString(),
+    ideas: readIdeas(MOCK_IDEA_ROWS),
+    materials: readMaterials(MOCK_MATERIAL_ROWS)
+  };
 }

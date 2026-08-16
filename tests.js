@@ -1601,12 +1601,131 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(inPage && inClient, 'both files must declare a router URL');
     assertEq(inClient[1], inPage[1], 'the two router URLs have drifted apart');
   });
-  test('shifts page: production never loads server logic', async () => {
-    const src = await fetchText('shifts.html');
-    const mockBlock = src.indexOf('if (MOCK)');
-    assert(src.indexOf("'server/readApi.js'") > mockBlock,
-      'server modules may only be pulled in under ?mock=1');
-    assert(src.indexOf('mockSheet.js') > mockBlock, 'the fixture is dev-only too');
+  for (const page of ['shifts.html', 'ideas.html']) {
+    test(page + ': production never loads server logic', async () => {
+      const src = await fetchText(page);
+      const mockBlock = src.indexOf('if (MOCK)');
+      assert(mockBlock !== -1, 'the page must gate its dev switch');
+      assert(src.indexOf("'server/readApi.js'") > mockBlock,
+        'server modules may only be pulled in under ?mock=1');
+      assert(src.indexOf('mockSheet.js') > mockBlock, 'the fixture is dev-only too');
+    });
+  }
+  test('index.html: links to both read pages with relative paths', async () => {
+    const src = await fetchText('index.html');
+    // Relative only — these have to resolve under the /log-it/ Pages subpath.
+    assert(/href="shifts\.html"/.test(src), 'the mic screen must reach the shifts page');
+    assert(/href="ideas\.html"/.test(src), 'and the ideas page');
+    assert(!/href="\/(shifts|ideas)\.html"/.test(src), 'no domain-root paths');
+  });
+  test('index.html: the logging path still carries no read token', async () => {
+    const src = await fetchText('index.html');
+    // The token is prompted on the pages that read. Baking it into
+    // CFG_DEFAULTS here would publish it — the repo is public.
+    assert(src.indexOf('read_token') === -1,
+      'index.html neither stores nor sends the read token');
+  });
+
+  // ---- IDEA MODEL (ideaModel.js, client-side) ----
+  const IDEA = (ts, title, status, exc) => ({
+    ts, title, category: 'Personal', effort: 'Quick Win',
+    excitement: exc == null ? 3 : exc, nextStep: '', tags: '',
+    status: status || 'Active'
+  });
+  const MAT = (ts, project, item, price, acquired) => ({
+    ts, project, item, category: 'Supplies', price: price == null ? null : price,
+    notes: '', acquired: !!acquired
+  });
+
+  test('nextStatus: cycles Active to Done to Archived and back', () => {
+    assertEq(nextStatus('Active'), 'Done');
+    assertEq(nextStatus('Done'), 'Archived');
+    assertEq(nextStatus('Archived'), 'Active');
+  });
+  test('nextStatus: anything unrecognised lands on Active', () => {
+    assertEq(nextStatus(''), 'Active');
+    assertEq(nextStatus('Nonsense'), 'Active');
+  });
+
+  test('groupMaterials: attaches materials by their idea timestamp', () => {
+    const ts = new Date(2026, 5, 24, 7, 3, 57);
+    const g = groupMaterials([IDEA(ts, 'Build custom wooden oil bottle holders')],
+                             [MAT(ts, 'Build custom wooden oil bottle holders', 'wooden strips'),
+                              MAT(ts, 'Build custom wooden oil bottle holders', 'wood glue')]);
+    assertEq(g.ideas[0].materials.length, 2);
+    assertEq(g.orphans.length, 0);
+  });
+  test('groupMaterials: matches a blank-timestamp material by project name', () => {
+    // The live immersion-blender row was hand-added with no timestamp. Falling
+    // back to the project title is what keeps it visible under its idea.
+    const ts = new Date(2026, 5, 25, 5, 48, 26);
+    const g = groupMaterials([IDEA(ts, 'Purchase and use an immersion blender')],
+                             [MAT(null, 'Purchase and use an immersion blender',
+                                  'immersion blender', 26.3)]);
+    assertEq(g.ideas[0].materials.length, 1);
+    assertEq(g.orphans.length, 0);
+  });
+  test('groupMaterials: surfaces a material matching no idea instead of dropping it', () => {
+    // Silently swallowing a row would hide something the user actually wrote.
+    const g = groupMaterials([IDEA(new Date(2026, 5, 24), 'Some idea')],
+                             [MAT(null, 'A project that no longer exists', 'widget')]);
+    assertEq(g.ideas[0].materials.length, 0);
+    assertEq(g.orphans.length, 1);
+  });
+  test('groupMaterials: does not attach one idea\'s materials to another', () => {
+    const a = new Date(2026, 5, 24, 7, 0, 0);
+    const b = new Date(2026, 5, 25, 7, 0, 0);
+    const g = groupMaterials([IDEA(a, 'Idea A'), IDEA(b, 'Idea B')],
+                             [MAT(a, 'Idea A', 'thing')]);
+    assertEq(g.ideas[0].materials.length, 1);
+    assertEq(g.ideas[1].materials.length, 0);
+  });
+
+  test('ideaSpend: totals the prices actually recorded', () => {
+    const ts = new Date(2026, 5, 18, 9, 35, 28);
+    const idea = IDEA(ts, 'Organize my room with new storage');
+    idea.materials = [MAT(ts, 'x', 'organizers', 22.47, true),
+                      MAT(ts, 'x', 'shelf', null, false)];
+    assertEq(ideaSpend(idea), 22.47);
+  });
+  test('ideaSpend: no prices means no total, not zero-dollar noise', () => {
+    const idea = IDEA(new Date(2026, 5, 18), 'x');
+    idea.materials = [MAT(null, 'x', 'thing', null, false)];
+    assertEq(ideaSpend(idea), null);
+  });
+
+  test('filterIdeas: by status', () => {
+    const list = [IDEA(new Date(2026, 5, 1), 'a', 'Active'),
+                  IDEA(new Date(2026, 5, 2), 'b', 'Done'),
+                  IDEA(new Date(2026, 5, 3), 'c', 'Archived')];
+    assertEq(filterIdeas(list, 'Active').length, 1);
+    assertEq(filterIdeas(list, 'all').length, 3);
+  });
+  test('statusCounts: counts every state, including the empty ones', () => {
+    const c = statusCounts([IDEA(new Date(2026, 5, 1), 'a', 'Active'),
+                            IDEA(new Date(2026, 5, 2), 'b', 'Active')]);
+    assertEq(c.Active, 2);
+    assertEq(c.Done, 0);
+    assertEq(c.Archived, 0);
+  });
+
+  test('sortIdeas: newest first by default', () => {
+    const list = [IDEA(new Date(2026, 5, 1), 'old'), IDEA(new Date(2026, 7, 1), 'new')];
+    assertEq(sortIdeas(list, 'newest')[0].title, 'new');
+  });
+  test('sortIdeas: by excitement, newest breaking the tie', () => {
+    const list = [IDEA(new Date(2026, 5, 1), 'low', 'Active', 2),
+                  IDEA(new Date(2026, 5, 2), 'highOld', 'Active', 5),
+                  IDEA(new Date(2026, 7, 1), 'highNew', 'Active', 5)];
+    const s = sortIdeas(list, 'excitement');
+    assertEq(s[0].title, 'highNew');
+    assertEq(s[1].title, 'highOld');
+    assertEq(s[2].title, 'low');
+  });
+  test('sortIdeas: does not mutate the caller\'s array', () => {
+    const list = [IDEA(new Date(2026, 5, 1), 'old'), IDEA(new Date(2026, 7, 1), 'new')];
+    sortIdeas(list, 'newest');
+    assertEq(list[0].title, 'old');
   });
 
   runTests();

@@ -259,6 +259,22 @@
     }
     #send-btn:active { background: var(--action); color: #fff; }
 
+    /* The two read pages. Deliberately quiet: this screen's job is the mic,
+       and the layout is top-anchored so nothing here can push it around. */
+    #nav {
+      margin-top: 28px;
+      display: flex;
+      gap: 22px;
+      justify-content: center;
+    }
+    #nav a {
+      color: var(--dim);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 6px 2px;
+    }
+    #nav a:active { color: var(--action); }
+
     /* expand: slide up + fade in, 250ms with 100ms delay */
     #app.text-mode #send-btn {
       opacity: 1;
@@ -545,6 +561,11 @@
   </div>
 
   <div id="transcript"></div>
+
+  <nav id="nav">
+    <a href="shifts.html">Shifts</a>
+    <a href="ideas.html">Ideas</a>
+  </nav>
 </div>
 
 <button id="gear-btn" onclick="openConfig()" aria-label="Settings">
@@ -1235,7 +1256,7 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   const cb = '?cb=' + Date.now();
   for (const src of ['server/tipRouting.js', 'server/trackPay.js',
                      'server/readApi.js', 'server/sheetWrite.js',
-                     'shiftStats.js', 'tests.js']) {
+                     'shiftStats.js', 'ideaModel.js', 'tests.js']) {
     const s = document.createElement('script');
     s.src = src + cb; // relative: must resolve under the /log-it/ subpath
     s.async = false;
