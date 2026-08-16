@@ -21,7 +21,7 @@ python3 tools/make-icons.py        # regenerate icons/ (stdlib only, by design)
   To isolate one, temporarily comment out the others' `test(...)` registrations.
 - **Manual/mock runs:** `?mock=<success|server|http4xx|http5xx|network|timeout>` fakes the router
   inside the real UI (set any non-empty `router_url` in localStorage first). `&to=<ms>` shortens the
-  15s timeout. Both dev switches are inert without their URL params.
+  30s timeout. Both dev switches are inert without their URL params.
 - The Browser pane blocks `file://` — always go through the local HTTP server.
 
 ## Architecture
@@ -41,7 +41,7 @@ index.html (PWA, GitHub Pages)
   ← confirmation card
 ```
 
-Six files carry the whole system: `index.html` (~1150 lines, app + styles + logic, no framework),
+Six files carry the whole system: `index.html` (~1240 lines, app + styles + logic, no framework),
 `daily.js` (the daily line's content list + pure selectors — production, loaded on every page view),
 `tests.js` (harness, injected only under `?test=1`), `server/routerWebApp.gs` (the router), and two
 pure server modules pasted into Apps Script as additional files and pulled into the browser only
@@ -119,8 +119,8 @@ and `server/trackPay.js` (→ `trackPay.gs`, Track wage + withholding).
   (`seededRandom`/mulberry32); every line shows exactly once before any of them repeat. **The
   boundary repair (`orderFor`) is load-bearing** — without it the minimum gap between two
   showings of the same line was 2 days; with it, 22+. Rotation length is the pool size in days,
-  so **adding lines to `DAILY_LINES` directly lengthens the no-repeat window** (currently ~180
-  lines/pool, ~6 months) — editing the list also reshuffles the whole schedule, so today's line
+  so **adding lines to `DAILY_LINES` directly lengthens the no-repeat window** (currently 254
+  lines total → am pool 191 / pm pool 190, ~6 months) — editing the list also reshuffles the whole schedule, so today's line
   can change when content is added; that's expected. Untagged lines sit in both the am and pm
   pools, so a same-day collision is possible; the pm pick is nudged **half the pool away**, never
   by 1 — a +1 nudge steals tomorrow's regularly scheduled slot and manufactures a back-to-back
@@ -144,7 +144,7 @@ and `server/trackPay.js` (→ `trackPay.gs`, Track wage + withholding).
 
 ### Client flow
 
-`processEntry` → `submitWithRetry` (3 attempts, 1s/3s backoff) → `callRouter` (15s `AbortController`,
+`processEntry` → `submitWithRetry` (3 attempts, 1s/3s backoff) → `callRouter` (30s `AbortController`,
 typed `SubmitError` of kind timeout/network/http/server; `isTransient` decides retry). Input is held
 in `pendingEntry` and cleared **only** on success; failures raise `#fail-card` (Retry/Copy/Dismiss).
 

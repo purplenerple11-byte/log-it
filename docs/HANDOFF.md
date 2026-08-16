@@ -1,4 +1,4 @@
-# Log It — Session Handoff (2026-08-01)
+# Log It — Session Handoff (2026-08-05)
 
 Read this first. It's the state of the project, how we work, and what's next.
 
@@ -32,7 +32,7 @@ PWA (index.html, GitHub Pages)
   ← enriched confirmation shown in confirm card
 ```
 
-- **Client** (`index.html`, ~1150 lines, no build/npm, plus `daily.js` for the
+- **Client** (`index.html`, ~1240 lines, no build/npm, plus `daily.js` for the
   daily-line content + pure selectors; tests live in `tests.js`, loaded only
   under `?test=1`):
   - Submission: `processEntry` → `submitWithRetry` (3 attempts, backoff 1s/3s)
