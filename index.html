@@ -1228,9 +1228,15 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   // tipRouting.js and trackPay.js are server logic (Apps Script), pulled in only
   // so the harness can test them — production must never load them. async=false
   // keeps them in order; dynamically inserted scripts are async by default.
-  for (const src of ['server/tipRouting.js', 'server/trackPay.js', 'tests.js']) {
+  // Cache-bust every one of them. fetchText/fetchJson inside the harness already
+  // do this, but these <script> tags did not, so an edited tests.js or module
+  // could be served from cache and the run would silently grade the PREVIOUS
+  // version — the suite reported 137/137 against a file that had 20 new tests.
+  const cb = '?cb=' + Date.now();
+  for (const src of ['server/tipRouting.js', 'server/trackPay.js',
+                     'server/readApi.js', 'tests.js']) {
     const s = document.createElement('script');
-    s.src = src;      // relative: must resolve under the /log-it/ subpath
+    s.src = src + cb; // relative: must resolve under the /log-it/ subpath
     s.async = false;
     document.head.appendChild(s);
   }

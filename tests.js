@@ -1086,5 +1086,208 @@ if (new URLSearchParams(location.search).get('test') === '1') {
       'the date must be appended per request, not baked into the const');
   });
 
+  // ---- READ API (server/readApi.js) ----
+  // Column layouts confirmed against the live sheets on 2026-08-16.
+  const TRACK_HEADERS = ['Timestamp', 'Hours', 'Tips', 'Hourly Rate', 'Notes',
+                         'Gross Wage', 'Est. Net Wage', 'Total Take-Home', 'Eff. $/hr'];
+  const SUSANS_HEADERS = ['Timestamp', 'Clock In', 'Clock Out', 'Hours', 'Pay @ $20/hr', 'Notes'];
+  const IDEA_HEADERS = ['Timestamp', 'Title', 'Category', 'Effort', 'Excitement (1-5)',
+                        'Next Step', 'Tags', 'Status'];
+  const MATERIAL_HEADERS = ['Timestamp', 'Project', 'Item', 'Category', 'Price', 'Notes', 'Got it'];
+
+  test('columnForHeader: finds a header regardless of case and spacing', () => {
+    assertEq(columnForHeader(TRACK_HEADERS, 'hours'), 1);
+    assertEq(columnForHeader(TRACK_HEADERS, 'Total Take-Home'), 7);
+    assertEq(columnForHeader(MATERIAL_HEADERS, 'got it'), 6);
+  });
+  test('columnForHeader: matches a header carrying a parenthetical', () => {
+    // The real Ideas sheet says "Excitement (1-5)", not "Excitement".
+    assertEq(columnForHeader(IDEA_HEADERS, 'Excitement'), 4);
+  });
+  test('columnForHeader: returns -1 rather than guessing when absent', () => {
+    // Guessing a letter is what put empty strings into Materials' real
+    // Price and Notes columns. A miss must be loud, not silently column 0.
+    assertEq(columnForHeader(IDEA_HEADERS, 'Got it'), -1);
+  });
+
+  test('payWeekKey: keys a Sunday to the Monday six days earlier', () => {
+    // 2026-07-26 is a Sunday; its pay week began Monday 2026-07-20.
+    assertEq(payWeekKey(new Date(2026, 6, 26, 21, 0, 0)), '2026-07-20');
+    assertEq(payWeekKey(new Date(2026, 6, 20, 9, 0, 0)), '2026-07-20');
+  });
+
+  test('recomputeWeek: reproduces a real stored pay week to the penny', () => {
+    // Week of Mon 2026-07-20, exactly as the Track tab stores it.
+    const out = recomputeWeek([
+      { hours: 9.03, tips: 350 },
+      { hours: 9.28, tips: 516 },
+      { hours: 9.73, tips: 470 },
+      { hours: 9.27, tips: 294 }
+    ]);
+    assertEq(out[0].grossWage, 145.11); assertEq(out[0].netWage, 132.78);
+    assertEq(out[0].takeHome, 482.78);  assertEq(out[0].effectiveHourly, 53.46);
+    assertEq(out[1].grossWage, 149.13); assertEq(out[1].netWage, 132.05);
+    assertEq(out[1].takeHome, 648.05);  assertEq(out[1].effectiveHourly, 69.83);
+    assertEq(out[2].grossWage, 156.36); assertEq(out[2].netWage, 121.17);
+    assertEq(out[2].takeHome, 591.17);  assertEq(out[2].effectiveHourly, 60.76);
+    assertEq(out[3].grossWage, 148.97); assertEq(out[3].netWage, 112.96);
+    assertEq(out[3].takeHome, 406.96);  assertEq(out[3].effectiveHourly, 43.9);
+  });
+  test('recomputeWeek: prices each shift against the hours before it', () => {
+    // Two identical shifts must NOT net the same — the first absorbs the flat
+    // weekly SDI and the second is taxed at a higher marginal rate. A model
+    // that taxes shifts in isolation returns equal values here.
+    const out = recomputeWeek([{ hours: 9, tips: 0 }, { hours: 9, tips: 0 }]);
+    assert(out[0].netWage !== out[1].netWage, 'identical shifts cannot net the same');
+    assert(out[1].netWage < out[0].netWage, 'the later shift nets less');
+  });
+  test('recomputeWeek: an empty week yields nothing', () => {
+    assertEq(recomputeWeek([]).length, 0);
+  });
+
+  test('readTrackShifts: keeps pay the sheet already carries', () => {
+    const rows = [TRACK_HEADERS,
+      [new Date(2026, 7, 2, 19, 30, 0), 9.17, 242, '$26.39', '9:20am-7:00pm',
+       147.36, 111.86, 353.86, 38.59]];
+    const s = readTrackShifts(rows);
+    assertEq(s.length, 1);
+    assertEq(s[0].venue, 'Track');
+    assertEq(s[0].hours, 9.17);
+    assertEq(s[0].tips, 242);
+    assertEq(s[0].notes, '9:20am-7:00pm');
+    assertEq(s[0].pay.takeHome, 353.86);
+    assertEq(s[0].pay.source, 'sheet');
+  });
+  test('readTrackShifts: reports no pay for a pre-v4.5 row', () => {
+    // 16 of the 33 live rows look like this — F-I blank.
+    const rows = [TRACK_HEADERS,
+      [new Date(2026, 6, 5, 19, 49, 31), 8.3, 130, '$15.66', 'Clocked in at 9:39am',
+       '', '', '', '']];
+    assertEq(readTrackShifts(rows)[0].pay, null);
+  });
+  test('readTrackShifts: skips rows whose timestamp is not a date', () => {
+    const rows = [TRACK_HEADERS, ['', 9, 100, '', '', '', '', '', ''],
+                                 [new Date(2026, 7, 2), 9.17, 242, '', '', '', '', '', '']];
+    assertEq(readTrackShifts(rows).length, 1);
+  });
+
+  test('fillMissingPay: computes the gaps and leaves stored rows alone', () => {
+    const stored = { gross: 147.36, net: 111.86, takeHome: 353.86,
+                     effHourly: 38.59, source: 'sheet' };
+    const shifts = [
+      { ts: new Date(2026, 6, 13, 13, 56, 36), venue: 'Track', hours: 9.5, tips: 130, pay: null },
+      { ts: new Date(2026, 6, 16, 18, 23, 38), venue: 'Track', hours: 8.13, tips: 334, pay: null },
+      { ts: new Date(2026, 7, 2, 19, 30, 0),   venue: 'Track', hours: 9.17, tips: 242, pay: stored }
+    ];
+    const out = fillMissingPay(shifts);
+    assertEq(out[0].pay.source, 'computed');
+    assertEq(out[1].pay.source, 'computed');
+    assertEq(out[2].pay.source, 'sheet');
+    assertEq(out[2].pay.takeHome, 353.86, 'a stored row must not be overwritten');
+    // Both blank rows sit in the week beginning Mon 2026-07-13, so the second
+    // must be priced against the first's hours, not as a fresh week.
+    assertEq(out[0].pay.net, 139.73);
+    assertEq(out[1].pay.net, 115.63);
+  });
+  test('fillMissingPay: starts each pay week over', () => {
+    // Same shift, two different weeks — each is the first of its week, so both
+    // absorb the flat SDI and net identically. Bucketing by week is what makes
+    // this true; a model that ran one running total across all history wouldn't.
+    const shifts = [
+      { ts: new Date(2026, 6, 13, 12, 0, 0), venue: 'Track', hours: 9, tips: 0, pay: null },
+      { ts: new Date(2026, 6, 20, 12, 0, 0), venue: 'Track', hours: 9, tips: 0, pay: null }
+    ];
+    const out = fillMissingPay(shifts);
+    assertEq(out[0].pay.net, out[1].pay.net);
+  });
+  test('fillMissingPay: ignores venues that carry no withholding model', () => {
+    const shifts = [{ ts: new Date(2026, 6, 15, 14, 0, 0), venue: 'Susans',
+                      hours: 2, grossPay: 40, pay: null }];
+    assertEq(fillMissingPay(shifts)[0].pay, null);
+  });
+
+  test('markDuplicates: flags same day, same venue, same hours', () => {
+    // The live Susans tab holds exactly this pair, logged an hour apart.
+    const shifts = [
+      { ts: new Date(2026, 6, 15, 7, 41, 54), venue: 'Susans', hours: 2 },
+      { ts: new Date(2026, 6, 15, 8, 41, 56), venue: 'Susans', hours: 2 }
+    ];
+    const out = markDuplicates(shifts);
+    assertEq(out[0].dupeOf, null, 'the first occurrence is not the duplicate');
+    assert(out[1].dupeOf !== null, 'the second must point at the first');
+  });
+  test('markDuplicates: does not flag different hours or different days', () => {
+    const out = markDuplicates([
+      { ts: new Date(2026, 6, 15, 7, 0, 0), venue: 'Susans', hours: 2 },
+      { ts: new Date(2026, 6, 15, 8, 0, 0), venue: 'Susans', hours: 5 },
+      { ts: new Date(2026, 6, 16, 7, 0, 0), venue: 'Susans', hours: 2 }
+    ]);
+    assertEq(out[1].dupeOf, null);
+    assertEq(out[2].dupeOf, null);
+  });
+  test('markDuplicates: does not flag the same shift at different venues', () => {
+    const out = markDuplicates([
+      { ts: new Date(2026, 6, 15, 7, 0, 0), venue: 'Track', hours: 2 },
+      { ts: new Date(2026, 6, 15, 8, 0, 0), venue: 'Susans', hours: 2 }
+    ]);
+    assertEq(out[1].dupeOf, null);
+  });
+
+  test('readSusansShifts: carries gross pay and no withholding block', () => {
+    const rows = [SUSANS_HEADERS,
+      [new Date(2026, 5, 11, 17, 35, 17), '2:35 PM', '8:30 PM', 5.42, '$108.40',
+       'there was an hour long rush']];
+    const s = readSusansShifts(rows);
+    assertEq(s[0].venue, 'Susans');
+    assertEq(s[0].hours, 5.42);
+    assertEq(s[0].grossPay, 108.4);
+    assertEq(s[0].clockIn, '2:35 PM');
+    assertEq(s[0].pay, null, 'Susans pay is gross — it must not pose as take-home');
+  });
+
+  test('readIdeas: a blank status cell reads as Active', () => {
+    // Nothing is backfilled, so all 25 live rows arrive with column H empty.
+    const rows = [IDEA_HEADERS,
+      [new Date(2026, 7, 14, 8, 0, 27), 'Get better toothbrush holder for wall',
+       'Personal', 'Quick Win', 2, 'Search for wall-mounted holders', 'home', '']];
+    const i = readIdeas(rows);
+    assertEq(i[0].status, 'Active');
+    assertEq(i[0].excitement, 2);
+    assertEq(i[0].title, 'Get better toothbrush holder for wall');
+  });
+  test('readIdeas: an explicit status is preserved', () => {
+    const rows = [IDEA_HEADERS,
+      [new Date(2026, 7, 14), 'x', '', '', 3, '', '', 'Archived']];
+    assertEq(readIdeas(rows)[0].status, 'Archived');
+  });
+  test('readIdeas: tolerates a sheet with no Status column yet', () => {
+    // Until the header is added, every idea is simply Active.
+    const rows = [IDEA_HEADERS.slice(0, 7),
+      [new Date(2026, 7, 14), 'x', '', '', 3, '', '']];
+    assertEq(readIdeas(rows)[0].status, 'Active');
+  });
+
+  test('readMaterials: reads the hand-maintained price and the acquired flag', () => {
+    const rows = [MATERIAL_HEADERS,
+      [new Date(2026, 5, 18, 9, 28, 37), 'Get new shoes for track season',
+       'track shoes', 'Other', 57.42, 'ebay', true]];
+    const m = readMaterials(rows);
+    assertEq(m[0].price, 57.42);
+    assertEq(m[0].notes, 'ebay');
+    assertEq(m[0].acquired, true);
+    assertEq(m[0].project, 'Get new shoes for track season');
+  });
+  test('readMaterials: keeps a row whose timestamp is blank', () => {
+    // The live immersion-blender row has no timestamp. Dropping it would hide
+    // a real material; it is kept with ts null and identified another way.
+    const rows = [MATERIAL_HEADERS,
+      ['', 'Purchase and use an immersion blender', 'immersion blender',
+       'Tools', 26.3, '', '']];
+    const m = readMaterials(rows);
+    assertEq(m.length, 1);
+    assertEq(m[0].ts, null);
+    assertEq(m[0].acquired, false);
+  });
+
   runTests();
 }
