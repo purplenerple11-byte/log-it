@@ -63,6 +63,7 @@
 
 <script src="shiftStats.js"></script>
 <script src="dataClient.js"></script>
+<script src="ui.js"></script>
 <script>
 const MOCK = new URLSearchParams(location.search).get('mock') === '1';
 
@@ -205,13 +206,14 @@ function currentMonthKey() {
 // DELETE
 // ---------------------------------------------------------------
 async function removeShift(s) {
-  const label = dayLabel(s.ts) + ' · ' + s.venue + ' · ' + s.hours + 'h';
+  const label = dayLabel(s.ts) + ' · ' + s.venue + ' · ' + s.hours + 'h'
+    + (s.tips ? ' · ' + money0(s.tips) + ' tips' : '');
   // Deleting also rewrites the rest of that Track pay week, so the confirm
   // says so rather than pretending one row is all that changes.
   const warn = s.venue === 'Track'
-    ? '\n\nThe other shifts in that pay week will have their take-home recomputed.'
-    : '';
-  if (!confirm('Delete this shift?\n\n' + label + warn)) return;
+    ? label + '. The other shifts in that pay week will have their take-home recomputed.'
+    : label + '. This cannot be undone from here.';
+  if (!await uiConfirm('Delete this shift?', warn, { okLabel: 'Delete', danger: true })) return;
 
   if (MOCK) {
     SHIFTS = SHIFTS.filter((x) => x !== s);
@@ -234,7 +236,7 @@ async function removeShift(s) {
       : 'deleted');
     load();
   } catch (err) {
-    alert(err.message);
+    await uiAlert("Didn't delete", err.message);
     setStamp('');
   }
 }

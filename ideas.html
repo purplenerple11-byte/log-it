@@ -84,6 +84,7 @@
 
 <script src="ideaModel.js"></script>
 <script src="dataClient.js"></script>
+<script src="ui.js"></script>
 <script>
 const MOCK = new URLSearchParams(location.search).get('mock') === '1';
 
@@ -200,7 +201,7 @@ async function send(key, body, apply, revert) {
     busy = null;
     setStamp('');
     render();
-    alert(err.message);
+    uiAlert("Didn't save", err.message);
   }
 }
 
@@ -216,11 +217,11 @@ function cycleStatus(key) {
   }, () => { i.status = now; }, () => { i.status = was; });
 }
 
-function editNextStep(key) {
+async function editNextStep(key) {
   const i = findIdea(key);
   if (!i) return;
   const was = i.nextStep;
-  const next = prompt('Next step', was);
+  const next = await uiPrompt('Next step', was, { placeholder: 'What moves this forward?' });
   if (next === null || next === was) return;
   send(key, {
     target: 'idea', ts: i.ts ? i.ts.toISOString() : null,
@@ -240,16 +241,20 @@ function toggleMaterial(key, item) {
   }, () => { m.acquired = !was; }, () => { m.acquired = was; });
 }
 
-function editPrice(key, item) {
+async function editPrice(key, item) {
   const i = findIdea(key);
   const m = i && i.materials.find((x) => x.item === item);
   if (!m) return;
   const was = m.price;
-  const raw = prompt('Price for ' + item, was == null ? '' : String(was));
+  const raw = await uiPrompt('Price for ' + item, was == null ? '' : String(was),
+    { placeholder: '0.00' });
   if (raw === null) return;
   const trimmed = raw.trim();
   const value = trimmed === '' ? '' : Number(trimmed.replace(/[$,\s]/g, ''));
-  if (value !== '' && !isFinite(value)) { alert('That is not a number'); return; }
+  if (value !== '' && (!isFinite(value) || value < 0)) {
+    await uiAlert('Not a price', '"' + raw + '" is not a number. Leave it blank to clear it.');
+    return;
+  }
   send(key, {
     target: 'material', ts: m.ts ? m.ts.toISOString() : null,
     project: m.project, item: m.item, field: 'price', value: value,

@@ -1611,6 +1611,19 @@ if (new URLSearchParams(location.search).get('test') === '1') {
       assert(src.indexOf('mockSheet.js') > mockBlock, 'the fixture is dev-only too');
     });
   }
+  for (const page of ['shifts.html', 'ideas.html']) {
+    test(page + ': uses in-app dialogs, never the browser\'s', async () => {
+      const src = await fetchText(page);
+      // window.prompt/confirm/alert render in browser chrome — grey, wrong
+      // typeface, and on a phone they read as a security warning.
+      for (const bad of ['prompt(', 'confirm(', 'alert(']) {
+        const re = new RegExp('(^|[^.\\w])' + bad.replace('(', '\\('), 'g');
+        const hits = (src.match(re) || []).filter((h) => !/ui(Prompt|Confirm|Alert)/i.test(h));
+        assertEq(hits.length, 0, 'found a native ' + bad + ' in ' + page);
+      }
+      assert(src.indexOf('ui.js') !== -1, 'the page must load the dialog helpers');
+    });
+  }
   test('index.html: links to both read pages with relative paths', async () => {
     const src = await fetchText('index.html');
     // Relative only — these have to resolve under the /log-it/ Pages subpath.
