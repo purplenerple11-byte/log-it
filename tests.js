@@ -1225,6 +1225,19 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(out[1].dupeOf, null);
     assertEq(out[2].dupeOf, null);
   });
+  test('markDuplicates: is independent of the order rows arrive in', () => {
+    // The router concatenates two tabs and may hand these over newest-first.
+    // Whichever way they come, the ORIGINAL must never be the one flagged for
+    // deletion — otherwise the UI offers to remove the wrong row.
+    const early = new Date(2026, 6, 15, 7, 41, 54);
+    const late  = new Date(2026, 6, 15, 8, 41, 56);
+    const out = markDuplicates([
+      { ts: late,  venue: 'Susans', hours: 2 },
+      { ts: early, venue: 'Susans', hours: 2 }
+    ]);
+    assertEq(out[1].dupeOf, null, 'the earlier row is the original');
+    assertEq(out[0].dupeOf, early.toISOString(), 'the later row is the copy');
+  });
   test('markDuplicates: does not flag the same shift at different venues', () => {
     const out = markDuplicates([
       { ts: new Date(2026, 6, 15, 7, 0, 0), venue: 'Track', hours: 2 },
@@ -1287,6 +1300,210 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(m.length, 1);
     assertEq(m[0].ts, null);
     assertEq(m[0].acquired, false);
+  });
+
+  // ---- READ TOKEN ----
+  test('tokenMatches: accepts the configured token', () => {
+    assertEq(tokenMatches('s3cret', 's3cret'), true);
+  });
+  test('tokenMatches: rejects a wrong token', () => {
+    assertEq(tokenMatches('nope', 's3cret'), false);
+  });
+  test('tokenMatches: fails closed when READ_TOKEN is not configured', () => {
+    // The dangerous case. If Script Properties has no READ_TOKEN, a naive
+    // equality check would compare '' to '' and let everyone in — turning a
+    // forgotten setup step into a public feed of income and ideas.
+    assertEq(tokenMatches('', null), false);
+    assertEq(tokenMatches('', ''), false);
+    assertEq(tokenMatches('anything', null), false);
+    assertEq(tokenMatches('anything', ''), false);
+  });
+  test('tokenMatches: rejects an empty token against a real one', () => {
+    assertEq(tokenMatches('', 's3cret'), false);
+    assertEq(tokenMatches(null, 's3cret'), false);
+  });
+
+  // ---- ROUTER OP DISPATCH (server/routerWebApp.gs) ----
+  test('router: a read is answered before any lock is taken', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    const read = src.indexOf("op === 'read'");
+    const lock = src.indexOf('LockService.getScriptLock()');
+    assert(read !== -1, 'doPost must dispatch on op');
+    assert(lock !== -1, 'the log path still needs the lock');
+    // doPost holds the script lock for a whole log request so retries are
+    // idempotent (v4.6). If a read took that lock, opening the shifts page
+    // would block logging a shift — the reads are pure and need no lock.
+    assert(read < lock, 'the read branch must precede any lock acquisition');
+  });
+  test('router: logging never checks the read token', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    const lastCheck = src.lastIndexOf('requireReadToken(body.token)');
+    const gemini = src.indexOf('callGeminiWithFallback(text)');
+    assert(lastCheck !== -1, 'read and write ops must check the token');
+    assert(gemini !== -1, 'the log path must still reach Gemini');
+    // A missing or wrong token can never stop a log being written.
+    assert(lastCheck < gemini, 'every token check must sit in the op branches');
+  });
+  test('router: the token comes from Script Properties, not the repo', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    assert(src.indexOf("getProperty('READ_TOKEN')") !== -1,
+      'READ_TOKEN must be read from Script Properties');
+    assert(!/READ_TOKEN\s*=\s*['"][^'"]+['"]/.test(src),
+      'the token must never be hardcoded in a public repo');
+  });
+  test('router: an unauthorized reply is coded so the client can prompt', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    // Apps Script always answers 200, so the client cannot read a status code.
+    assert(src.indexOf("'unauthorized'") !== -1, 'rejections need a code');
+    assert(src.indexOf('code:') !== -1, 'the error reply must carry it');
+  });
+  test('router: patch and delete are serialized against writes', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    const branch = src.indexOf("op === 'patch'");
+    assert(branch !== -1, 'doPost must dispatch patch');
+    assert(src.indexOf("op === 'delete'") !== -1, 'doPost must dispatch delete');
+    // They mutate the sheet, so unlike reads they must not interleave with an
+    // append mid-write.
+    assert(src.indexOf('LockService.getScriptLock()', branch) !== -1,
+      'patch and delete must take the lock');
+  });
+
+  // ---- WRITE-BACK (server/sheetWrite.js) ----
+  const IDEA_ROWS = [
+    IDEA_HEADERS,
+    [new Date(2026, 6, 27, 15, 45, 30), 'Buy fly tape for the garage', 'Personal',
+     'Quick Win', 1, 'Purchase fly tape', 'garage', ''],
+    [new Date(2026, 7, 14, 8, 0, 27), 'Get better toothbrush holder for wall',
+     'Personal', 'Quick Win', 2, 'Search for holders', 'home', '']
+  ];
+
+  test('locateIdeaRow: finds the sheet row for a timestamp', () => {
+    // Row 3 of the sheet — headers are row 1.
+    assertEq(locateIdeaRow(IDEA_ROWS, new Date(2026, 7, 14, 8, 0, 27).toISOString()), 3);
+  });
+  test('locateIdeaRow: reports not-found rather than a wrong row', () => {
+    assertEq(locateIdeaRow(IDEA_ROWS, new Date(2026, 7, 15).toISOString()), ROW_NOT_FOUND);
+  });
+  test('locateIdeaRow: never matches on position', () => {
+    // Sorting or deleting a row in Sheets shifts every index. Identity has to
+    // come from the timestamp, so a garbage timestamp finds nothing at all.
+    assertEq(locateIdeaRow(IDEA_ROWS, 'not-a-date'), ROW_NOT_FOUND);
+  });
+
+  const MAT_ROWS = [
+    MATERIAL_HEADERS,
+    [new Date(2026, 5, 24, 7, 3, 57), 'Build custom wooden oil bottle holders',
+     'wooden strips', 'Supplies', '', '', ''],
+    [new Date(2026, 5, 24, 7, 3, 57), 'Build custom wooden oil bottle holders',
+     'wood glue', 'Supplies', '', '', ''],
+    ['', 'Purchase and use an immersion blender', 'immersion blender',
+     'Tools', 26.3, '', '']
+  ];
+
+  test('locateMaterialRow: separates two materials sharing one timestamp', () => {
+    // handleIdea stamps every material of an idea with that idea's timestamp,
+    // so the timestamp alone cannot identify one. Item text is what splits them.
+    const ts = new Date(2026, 5, 24, 7, 3, 57).toISOString();
+    assertEq(locateMaterialRow(MAT_ROWS, { ts: ts, item: 'wooden strips' }), 2);
+    assertEq(locateMaterialRow(MAT_ROWS, { ts: ts, item: 'wood glue' }), 3);
+  });
+  test('locateMaterialRow: falls back to project + item when the timestamp is blank', () => {
+    // The live immersion-blender row was hand-added with no timestamp.
+    assertEq(locateMaterialRow(MAT_ROWS, {
+      ts: null, project: 'Purchase and use an immersion blender',
+      item: 'immersion blender'
+    }), 4);
+  });
+  test('locateMaterialRow: refuses to write when the fallback is ambiguous', () => {
+    // Two undated rows that look alike must never be resolved by guessing.
+    const rows = [MATERIAL_HEADERS,
+      ['', 'Shop', 'screws', 'Parts', '', '', ''],
+      ['', 'Shop', 'screws', 'Parts', '', '', '']];
+    assertEq(locateMaterialRow(rows, { ts: null, project: 'Shop', item: 'screws' }),
+      ROW_AMBIGUOUS);
+  });
+  test('locateMaterialRow: item match is case and space tolerant', () => {
+    const ts = new Date(2026, 5, 24, 7, 3, 57).toISOString();
+    assertEq(locateMaterialRow(MAT_ROWS, { ts: ts, item: '  Wooden Strips ' }), 2);
+  });
+
+  test('validatePatch: accepts the whitelisted fields', () => {
+    assertEq(validatePatch({ target: 'idea', field: 'status', value: 'Done' }).field, 'status');
+    assertEq(validatePatch({ target: 'idea', field: 'next_step', value: 'x' }).field, 'next_step');
+    assertEq(validatePatch({ target: 'material', field: 'acquired', value: true }).field, 'acquired');
+    assertEq(validatePatch({ target: 'material', field: 'price', value: '$57.42' }).value, 57.42);
+  });
+  // These assert on the message, not merely that something threw: a bare
+  // "it threw" passes even when the function does not exist, because calling
+  // an undefined name throws ReferenceError. Three of these were vacuously
+  // green before the implementation was written.
+  function refusal(fn) {
+    try { fn(); } catch (e) { return e.message; }
+    return '(did not throw)';
+  }
+  test('validatePatch: rejects a field that is not whitelisted', () => {
+    // Without this, a typo or a tampered request could rewrite hours, tips, or
+    // any other column the page never meant to expose.
+    assert(/not patchable: title/.test(
+      refusal(() => validatePatch({ target: 'idea', field: 'title', value: 'x' }))),
+      'title is not patchable');
+  });
+  test('validatePatch: rejects a field belonging to the other target', () => {
+    assert(/not patchable: price/.test(
+      refusal(() => validatePatch({ target: 'idea', field: 'price', value: 1 }))),
+      'price belongs to a material, not an idea');
+  });
+  test('validatePatch: rejects an unknown target', () => {
+    assert(/unknown patch target: shift/.test(
+      refusal(() => validatePatch({ target: 'shift', field: 'hours', value: 1 }))));
+  });
+  test('validatePatch: only the three real statuses are accepted', () => {
+    assertEq(validatePatch({ target: 'idea', field: 'status', value: 'archived' }).value, 'Archived');
+    assert(/not a valid status: Maybe/.test(
+      refusal(() => validatePatch({ target: 'idea', field: 'status', value: 'Maybe' }))),
+      'a free-text status would break every filter');
+  });
+  test('validatePatch: a price must be a real non-negative number', () => {
+    assertEq(validatePatch({ target: 'material', field: 'price', value: '' }).value, '');
+    assert(/not a number: lots/.test(
+      refusal(() => validatePatch({ target: 'material', field: 'price', value: 'lots' }))));
+    assert(/not a number: -5/.test(
+      refusal(() => validatePatch({ target: 'material', field: 'price', value: -5 }))));
+  });
+
+  test('router: a delete verifies the row before removing it', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    const verify = src.indexOf('verifyShiftRow(rows[row - 1]');
+    const del = src.indexOf('tab.deleteRow(row)');
+    assert(verify !== -1 && del !== -1, 'delete must verify then remove');
+    assert(verify < del, 'verification has to happen before the row is gone');
+  });
+  test('router: a Track delete repairs the pay week afterwards', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    const del = src.indexOf('tab.deleteRow(row)');
+    const fix = src.indexOf('recomputeTrackWeek(tab, ts)');
+    assert(fix !== -1, 'the surviving rows in that week must be recomputed');
+    // Their stored net was calculated as though the deleted shift's hours were
+    // in the week — the $23.37 error cleaned up by hand on 2026-07-27.
+    assert(del < fix, 'recompute the week only after the row is actually gone');
+  });
+  test('router: the deleted timestamp is captured before deletion', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    // Reading rows[row-1][0] after deleteRow would read a different shift.
+    assert(src.indexOf('var ts = rows[row - 1][0];') < src.indexOf('tab.deleteRow(row)'),
+      'grab the timestamp while the row still exists');
+  });
+
+  test('verifyShiftRow: confirms the row still holds what the page showed', () => {
+    const row = [new Date(2026, 7, 2, 19, 30, 0), 9.17, 242, '$26.39', ''];
+    assertEq(verifyShiftRow(row, { hours: 9.17, tips: 242 }), true);
+  });
+  test('verifyShiftRow: refuses when the sheet has moved on', () => {
+    // A page left open while the sheet was edited must not delete a row whose
+    // contents no longer match what the user was looking at.
+    const row = [new Date(2026, 7, 2, 19, 30, 0), 9.17, 242, '$26.39', ''];
+    assertEq(verifyShiftRow(row, { hours: 8.5, tips: 242 }), false);
+    assertEq(verifyShiftRow(row, { hours: 9.17, tips: 300 }), false);
   });
 
   runTests();

@@ -328,24 +328,55 @@ function fillMissingPay(shifts) {
 // so this catches hand-entry mistakes and the rows written before that fix —
 // including the two identical 7/15 Susans rows.
 //
-// Points at the earlier row and never the first occurrence, so the UI can
-// offer to remove the copy rather than the original.
+// Points at the earlier row and never the first occurrence, so the UI offers to
+// remove the copy rather than the original. Deciding that from the array's own
+// order would be a trap — the router concatenates two tabs and may hand these
+// over newest-first — so it walks its own chronological view instead and the
+// caller's ordering is irrelevant.
 //
 // Mutates and returns the same array.
 function markDuplicates(shifts) {
   if (!Array.isArray(shifts)) return [];
-  var seen = {};
+
+  var dated = [];
   for (var i = 0; i < shifts.length; i++) {
     var s = shifts[i];
     if (!s) continue;
     s.dupeOf = null;
-    if (!(s.ts instanceof Date)) continue;
-    var key = s.venue + '|' + localDayKey(s.ts) + '|' + (cellNumber(s.hours) || 0);
+    if (s.ts instanceof Date) dated.push(s);
+  }
+  dated.sort(function (a, b) { return a.ts.getTime() - b.ts.getTime(); });
+
+  var seen = {};
+  for (var j = 0; j < dated.length; j++) {
+    var d = dated[j];
+    var key = d.venue + '|' + localDayKey(d.ts) + '|' + (cellNumber(d.hours) || 0);
     if (seen[key]) {
-      s.dupeOf = seen[key].toISOString();
+      d.dupeOf = seen[key].toISOString();
     } else {
-      seen[key] = s.ts;
+      seen[key] = d.ts;
     }
   }
   return shifts;
+}
+
+// Does the caller's token match the one in Script Properties?
+//
+// FAILS CLOSED. If READ_TOKEN was never set, `expected` is null or '' — and a
+// plain equality check would then compare '' to '' and admit everyone, turning
+// a forgotten setup step into a public feed of income history and ideas. An
+// unconfigured token denies everything instead.
+//
+// Compared without an early exit so the time taken doesn't depend on how many
+// leading characters happen to be right.
+function tokenMatches(provided, expected) {
+  var want = String(expected == null ? '' : expected);
+  var got  = String(provided == null ? '' : provided);
+  if (!want) return false;
+  if (got.length !== want.length) return false;
+  var diff = 0;
+  for (var i = 0; i < want.length; i++) {
+    diff |= got.charCodeAt(i) ^ want.charCodeAt(i);
+  }
+  return diff === 0;
 }
