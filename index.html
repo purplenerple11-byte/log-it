@@ -1234,7 +1234,8 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   // version — the suite reported 137/137 against a file that had 20 new tests.
   const cb = '?cb=' + Date.now();
   for (const src of ['server/tipRouting.js', 'server/trackPay.js',
-                     'server/readApi.js', 'server/sheetWrite.js', 'tests.js']) {
+                     'server/readApi.js', 'server/sheetWrite.js',
+                     'shiftStats.js', 'tests.js']) {
     const s = document.createElement('script');
     s.src = src + cb; // relative: must resolve under the /log-it/ subpath
     s.async = false;

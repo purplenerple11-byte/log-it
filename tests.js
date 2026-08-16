@@ -1506,5 +1506,108 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(verifyShiftRow(row, { hours: 9.17, tips: 300 }), false);
   });
 
+  // ---- SHIFT STATS (shiftStats.js, client-side aggregation) ----
+  const TRACK = (ts, hours, tips, takeHome, net) => ({
+    ts: ts, venue: 'Track', week: payWeekKey(ts), hours: hours, tips: tips,
+    pay: { gross: 0, net: net, takeHome: takeHome, effHourly: 0, source: 'sheet' }
+  });
+  const SUSANS = (ts, hours, gross) => ({
+    ts: ts, venue: 'Susans', week: payWeekKey(ts), hours: hours, tips: 0,
+    grossPay: gross, pay: null
+  });
+
+  test('bucketShifts: groups by pay week, oldest first', () => {
+    const b = bucketShifts([
+      TRACK(new Date(2026, 7, 2, 19, 30), 9.17, 242, 353.86, 111.86),
+      TRACK(new Date(2026, 6, 23, 18, 53), 9.03, 350, 482.78, 132.78)
+    ], 'week');
+    assertEq(b.length, 2);
+    assertEq(b[0].key, '2026-07-20', 'oldest bucket first, so a chart reads left to right');
+    assertEq(b[1].key, '2026-07-27');
+  });
+  test('bucketShifts: groups by calendar month', () => {
+    const b = bucketShifts([
+      TRACK(new Date(2026, 6, 23), 9.03, 350, 482.78, 132.78),
+      TRACK(new Date(2026, 7, 2), 9.17, 242, 353.86, 111.86),
+      TRACK(new Date(2026, 7, 9), 9.68, 219, 334.90, 115.90)
+    ], 'month');
+    assertEq(b.length, 2);
+    assertEq(b[0].key, '2026-07');
+    assertEq(b[1].shifts.length, 2);
+  });
+  test('bucketShifts: splits take-home into tips and net wage', () => {
+    // The stacked bar reads tips on top of net wage; together they are
+    // take-home, so the two parts must sum to it exactly.
+    const b = bucketShifts([TRACK(new Date(2026, 7, 2), 9.17, 242, 353.86, 111.86)], 'week');
+    assertEq(b[0].tips, 242);
+    assertEq(b[0].netWage, 111.86);
+    assertEq(b[0].takeHome, 353.86);
+    assertEq(b[0].tips + b[0].netWage, b[0].takeHome);
+  });
+  test('bucketShifts: never folds Susans gross into Track take-home', () => {
+    // Track's figure is after withholding; Susans' $20/hr is before it. One
+    // number built from both would be part post-tax and part pre-tax.
+    const b = bucketShifts([
+      TRACK(new Date(2026, 6, 23), 9.03, 350, 482.78, 132.78),
+      SUSANS(new Date(2026, 6, 22), 5, 100)
+    ], 'week');
+    assertEq(b.length, 1, 'same pay week');
+    assertEq(b[0].takeHome, 482.78, 'Susans gross must stay out of take-home');
+    assertEq(b[0].susansGross, 100, 'and be reported on its own');
+  });
+  test('bucketShifts: an unpriced shift contributes hours but no money', () => {
+    const noPay = { ts: new Date(2026, 5, 3), venue: 'Track', week: payWeekKey(new Date(2026, 5, 3)),
+                    hours: 8.17, tips: 338, pay: null };
+    const b = bucketShifts([noPay], 'week');
+    assertEq(b[0].hours, 8.17);
+    assertEq(b[0].takeHome, 0, 'no invented money for a row that has none');
+  });
+
+  test('summarize: reports Track and Susans side by side, never added', () => {
+    const s = summarize([
+      TRACK(new Date(2026, 7, 2), 9.17, 242, 353.86, 111.86),
+      TRACK(new Date(2026, 7, 9), 9.68, 219, 334.90, 115.90),
+      SUSANS(new Date(2026, 7, 5), 5, 100)
+    ]);
+    assertEq(s.trackTakeHome, 688.76);
+    assertEq(s.trackHours, 18.85);
+    assertEq(s.susansGross, 100);
+    assertEq(s.shifts, 3);
+  });
+  test('summarize: effective hourly is take-home over Track hours', () => {
+    const s = summarize([TRACK(new Date(2026, 7, 2), 10, 242, 350, 108)]);
+    assertEq(s.trackEffHourly, 35);
+  });
+  test('summarize: no Track hours yields no divide-by-zero', () => {
+    const s = summarize([SUSANS(new Date(2026, 7, 5), 5, 100)]);
+    assertEq(s.trackEffHourly, 0);
+    assertEq(s.trackTakeHome, 0);
+  });
+
+  test('filterShifts: by venue', () => {
+    const all = [TRACK(new Date(2026, 7, 2), 9.17, 242, 353.86, 111.86),
+                 SUSANS(new Date(2026, 7, 5), 5, 100)];
+    assertEq(filterShifts(all, { venue: 'Track' }).length, 1);
+    assertEq(filterShifts(all, { venue: 'all' }).length, 2);
+  });
+
+  test('dataClient: its router URL matches the one index.html logs to', async () => {
+    // The URL is duplicated on purpose — index.html is the logging path and is
+    // not being refactored onto a shared config file for this. Duplication is
+    // only safe if it cannot drift, so this is the thing that stops it.
+    const [page, client] = await Promise.all([fetchText('index.html'), fetchText('dataClient.js')]);
+    const inPage = /router_url:\s*'([^']+)'/.exec(page);
+    const inClient = /DC_ROUTER_DEFAULT\s*=\s*\n?\s*'([^']+)'/.exec(client);
+    assert(inPage && inClient, 'both files must declare a router URL');
+    assertEq(inClient[1], inPage[1], 'the two router URLs have drifted apart');
+  });
+  test('shifts page: production never loads server logic', async () => {
+    const src = await fetchText('shifts.html');
+    const mockBlock = src.indexOf('if (MOCK)');
+    assert(src.indexOf("'server/readApi.js'") > mockBlock,
+      'server modules may only be pulled in under ?mock=1');
+    assert(src.indexOf('mockSheet.js') > mockBlock, 'the fixture is dev-only too');
+  });
+
   runTests();
 }
