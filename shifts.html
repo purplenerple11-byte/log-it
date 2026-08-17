@@ -110,8 +110,12 @@ function renderChart(shown) {
   // post-tax and part pre-tax, under a legend that would call all of it wage.
   // Susans is reported in the summary line and the log instead.
   const susansOnly = venue === 'Susans';
-  const buckets = bucketShifts(shown, grain).slice(grain === 'week' ? -10 : -8);
   const value = (b) => (susansOnly ? b.susansGross : b.takeHome);
+  // Trim AFTER slicing, not before: trimming first finds the earliest non-empty
+  // week in all of history and removes nothing, then the slice re-introduces
+  // leading zeros at the visible edge.
+  const buckets = trimLeadingEmpty(
+    bucketShifts(shown, grain).slice(grain === 'week' ? -10 : -8), value);
   const max = Math.max(1, ...buckets.map(value));
   const thisKey = grain === 'week' ? currentWeekKey() : currentMonthKey();
 
@@ -119,15 +123,17 @@ function renderChart(shown) {
     ? '<span><span class="swatch" style="background:var(--wage)"></span>Gross pay, before tax</span>'
     : '<span><span class="swatch" style="background:var(--action)"></span>Tips</span>'
       + '<span><span class="swatch" style="background:var(--wage)"></span>Net wage</span>'
-      + '<span style="margin-left:auto">Track only</span>';
+      + '<span style="margin-left:auto">Track take-home</span>';
 
   $('chart').innerHTML = buckets.map((b) => {
     const tipH = susansOnly ? 0 : Math.round((b.tips / max) * 110);
     const wageH = Math.round(((value(b) - (susansOnly ? 0 : b.tips)) / max) * 110);
+    // The number sits on the bar, not in a title attribute: a tooltip is
+    // nothing on a touchscreen, which is where this is actually read.
     // The current bucket is still being earned; at full strength it reads as
     // a slump every time you look at it mid-week.
-    return '<div class="col' + (b.key === thisKey ? ' partial' : '') + '" '
-      + 'title="' + escapeHtml(b.label + ' — ' + money(value(b))) + '">'
+    return '<div class="col' + (b.key === thisKey ? ' partial' : '') + '">'
+      + '<div class="val">' + compactMoney(value(b)) + '</div>'
       + '<div class="tip" style="height:' + tipH + 'px"></div>'
       + '<div class="wage" style="height:' + wageH + 'px"></div></div>';
   }).join('') || '<div class="msg">No shifts yet</div>';

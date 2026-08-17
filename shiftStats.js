@@ -66,8 +66,20 @@ const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
 
 function bucketLabel(key, granularity) {
   const p = key.split('-');
-  const month = MONTH_NAMES[parseInt(p[1], 10) - 1] || '';
-  return granularity === 'month' ? month : month + ' ' + parseInt(p[2], 10);
+  if (granularity === 'month') return MONTH_NAMES[parseInt(p[1], 10) - 1] || '';
+  // Numeric, because ten "Jun 15"-style labels wrap to two lines at 375px and
+  // turn the axis into a thicket.
+  return parseInt(p[1], 10) + '/' + parseInt(p[2], 10);
+}
+
+// Drop empty buckets before the data starts. A zero week in the middle is
+// information — you didn't work — but a run of zeros before you ever worked at
+// that venue is just dead space on a phone-width chart.
+function trimLeadingEmpty(buckets, valueOf) {
+  if (!Array.isArray(buckets)) return [];
+  let i = 0;
+  while (i < buckets.length && !(Number(valueOf(buckets[i])) > 0)) i++;
+  return buckets.slice(i);
 }
 
 function summarize(shifts) {
@@ -95,6 +107,15 @@ function summarize(shifts) {
 
   out.trackEffHourly = out.trackHours > 0 ? cents(out.trackTakeHome / out.trackHours) : 0;
   return out;
+}
+
+// Chart labels. Ten bars across a phone screen leaves room for "483", not
+// "$483.21" — and a hover tooltip is nothing on a touchscreen, so the number
+// has to be on the bar itself.
+function compactMoney(n) {
+  const v = Number(n) || 0;
+  if (Math.abs(v) < 1000) return String(Math.round(v));
+  return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
 }
 
 function filterShifts(shifts, opts) {

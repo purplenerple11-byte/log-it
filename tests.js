@@ -1584,6 +1584,50 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(s.trackTakeHome, 0);
   });
 
+  test('trimLeadingEmpty: drops empty buckets before the data starts', () => {
+    const b = [{ key: 'a', takeHome: 0 }, { key: 'b', takeHome: 0 },
+               { key: 'c', takeHome: 480 }, { key: 'd', takeHome: 220 }];
+    const out = trimLeadingEmpty(b, (x) => x.takeHome);
+    assertEq(out.length, 2);
+    assertEq(out[0].key, 'c');
+  });
+  test('trimLeadingEmpty: keeps a zero week in the middle', () => {
+    // A week you genuinely did not work is information. A run of zeros before
+    // you ever worked at that venue is not.
+    const b = [{ key: 'a', takeHome: 100 }, { key: 'b', takeHome: 0 },
+               { key: 'c', takeHome: 300 }];
+    assertEq(trimLeadingEmpty(b, (x) => x.takeHome).length, 3);
+  });
+  test('trimLeadingEmpty: all-empty yields nothing rather than everything', () => {
+    const b = [{ key: 'a', takeHome: 0 }, { key: 'b', takeHome: 0 }];
+    assertEq(trimLeadingEmpty(b, (x) => x.takeHome).length, 0);
+  });
+
+  test('bucketLabel: weekly labels stay short enough not to wrap', () => {
+    // Ten "Jun 15"-style labels wrapped to two lines at 375px and made a mess
+    // of the axis. Numeric is half the width.
+    const b = bucketShifts([TRACK(new Date(2026, 7, 2, 19, 30), 9.17, 242, 353.86, 111.86)], 'week');
+    assertEq(b[0].label, '7/27');
+    const m = bucketShifts([TRACK(new Date(2026, 7, 2, 19, 30), 9.17, 242, 353.86, 111.86)], 'month');
+    assertEq(m[0].label, 'Aug');
+  });
+
+  test('compactMoney: whole dollars under a thousand', () => {
+    // Ten bars across a phone screen: there is room for "483", not "$483.21".
+    assertEq(compactMoney(483.21), '483');
+    assertEq(compactMoney(0), '0');
+    assertEq(compactMoney(99.5), '100');
+  });
+  test('compactMoney: thousands collapse to k', () => {
+    assertEq(compactMoney(1000), '1k');
+    assertEq(compactMoney(2450), '2.5k');
+    assertEq(compactMoney(12345), '12.3k');
+  });
+  test('compactMoney: survives nonsense without printing NaN', () => {
+    assertEq(compactMoney(null), '0');
+    assertEq(compactMoney(undefined), '0');
+  });
+
   test('filterShifts: by venue', () => {
     const all = [TRACK(new Date(2026, 7, 2), 9.17, 242, 353.86, 111.86),
                  SUSANS(new Date(2026, 7, 5), 5, 100)];

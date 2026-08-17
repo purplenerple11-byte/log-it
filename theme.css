@@ -55,8 +55,12 @@ a { color: inherit; text-decoration: none; }
 .legend { display: flex; gap: 14px; font-size: 11px; color: var(--dim); margin-bottom: 8px; }
 .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
 
-.chart { display: flex; align-items: flex-end; gap: 5px; height: 116px; }
+.chart { display: flex; align-items: flex-end; gap: 5px; height: 136px; }
 .chart .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; min-width: 0; }
+.chart .val {
+  font-size: 10px; color: var(--dim); text-align: center;
+  margin-bottom: 3px; white-space: nowrap; line-height: 1;
+}
 .chart .tip { background: var(--action); border-radius: 4px 4px 0 0; }
 .chart .wage { background: var(--wage); border-radius: 0 0 4px 4px; }
 .chart .col.partial { opacity: 0.55; }
