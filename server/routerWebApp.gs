@@ -1,14 +1,26 @@
 // ================================================================
-// Log It — Router Web App  (v4.7 — Shift Date Extraction)
+// Log It — Router Web App  (v4.8 — Read + Write-Back Ops)
 // File:    routerWebApp.gs
 // Deploy:  Web App  |  Execute as: Me  |  Who has access: Anyone
 //
-// REQUIRES two more script files in this project:
+// REQUIRES four more script files in this project:
 //          tipRouting.gs  (paste from server/tipRouting.js)
 //          trackPay.gs    (paste from server/trackPay.js)
+//          readApi.gs     (paste from server/readApi.js)
+//          sheetWrite.gs  (paste from server/sheetWrite.js)
 //
 // SETUP: Apps Script → Project Settings → Script Properties
 //        Add:  GEMINI_API_KEY = your key from aistudio.google.com
+//        Add:  READ_TOKEN     = a long random string, also entered on the phone
+//
+// v4.8 changes: doPost dispatches on an `op` field — absent/'log' is the
+// original path byte for byte, plus 'read', 'patch' and 'delete' for the
+// shifts and ideas pages. Reads answer BEFORE any lock is taken, because the
+// log path holds the script lock for its whole request and a read holding it
+// would block logging a shift. The READ_TOKEN gates read/patch/delete only:
+// a missing or wrong key must never stop a log being written. Deleting a
+// duplicate Track row also recomputes the rest of that pay week, since the
+// survivors' stored net assumed the deleted shift's hours were in the week.
 //
 // v4.7 changes: tip entries carry shift_date, so a shift logged days later is
 // stamped and priced against the day it HAPPENED, not the day it was typed.
@@ -108,6 +120,34 @@ function doPost(e) {
   var lock = null;
   try {
     var body      = JSON.parse(e.postData.contents);
+    var op        = String(body.op || 'log');
+
+    // ------------------------------------------------------------
+    // READ — answered here, deliberately BEFORE any lock is taken.
+    //
+    // The log path below holds the script lock for the WHOLE request so that
+    // client retries are idempotent (see the duplicate guard). If a read took
+    // that same lock, opening the shifts page would block logging a shift —
+    // and Apps Script runs of 82s/107s/268s are in this project's history, so
+    // that block would be long. Reads mutate nothing and need no ordering.
+    // ------------------------------------------------------------
+    if (op === 'read') {
+      requireReadToken(body.token);
+      return jsonOk(handleRead(body));
+    }
+
+    // Patch and delete DO mutate, so unlike reads they must not interleave
+    // with an append that is halfway through writing a row.
+    if (op === 'patch' || op === 'delete') {
+      requireReadToken(body.token);
+      lock = LockService.getScriptLock();
+      if (!lock.tryLock(30000)) {
+        lock = null;
+        throw new Error('Sheet is busy — try again');
+      }
+      return jsonOk(op === 'patch' ? handlePatch(body) : handleDeleteShift(body));
+    }
+
     var text      = (body.text || '').trim();
     var sheetIds  = body.sheet_ids || {};
     var requestId = String(body.request_id || '').trim();
@@ -195,7 +235,10 @@ function doPost(e) {
 
   } catch (err) {
     Logger.log('doPost error: ' + err.message);
-    return jsonOk({ success: false, error: err.message });
+    // Apps Script always answers HTTP 200, so the client cannot read a status
+    // code. `code` is how it tells "wrong key, ask for it" apart from a real
+    // failure it should surface as an error.
+    return jsonOk({ success: false, error: err.message, code: err.code || '' });
   } finally {
     if (lock) lock.releaseLock();
   }
@@ -285,6 +328,174 @@ function callGeminiSingleModel(model, text, key) {
   Logger.log(model + ': ' + code + ' — ' + errMsg);
 
   throw new Error(errMsg);
+}
+
+// ================================================================
+// READ / WRITE-BACK OPS  (v4.8)
+// ================================================================
+// The Web App URL is baked into CFG_DEFAULTS and the repo is public. Writing
+// junk rows was the accepted exposure; letting anyone READ income history and
+// the idea list is a different one, so read, patch and delete are gated.
+//
+// The token lives in Script Properties and in the phone's localStorage —
+// never in the repo. tokenMatches (readApi.gs) fails closed when READ_TOKEN
+// is unset, so forgetting the setup step denies everyone rather than
+// publishing everything.
+//
+// Deliberately NOT applied to logging: a missing or wrong token must never
+// stop a shift being logged.
+function requireReadToken(provided) {
+  var expected = PropertiesService.getScriptProperties().getProperty('READ_TOKEN');
+  if (!tokenMatches(provided, expected)) {
+    var err = new Error('Wrong or missing read key');
+    err.code = 'unauthorized';
+    throw err;
+  }
+}
+
+// Everything the shifts or ideas page needs, in one round trip. Volumes are
+// tiny (33 shifts, 25 ideas), so there is no pagination and no incremental
+// sync — the cost of a request here is Apps Script's cold start, not the rows.
+function handleRead(body) {
+  var scope    = String(body.scope || '');
+  var sheetIds = body.sheet_ids || {};
+
+  if (scope === 'shifts') {
+    var ss = SpreadsheetApp.openById(sheetIds.tip || SHEET_IDS.tip);
+    var shifts = readTrackShifts(getTab(ss, 'Track').getDataRange().getValues())
+      .concat(readSusansShifts(getTab(ss, 'Susans').getDataRange().getValues()));
+    // Order of these two matters only for clarity: the pay repair works per
+    // week and the duplicate scan sorts its own view, so neither depends on
+    // how the two tabs were concatenated above.
+    fillMissingPay(shifts);
+    markDuplicates(shifts);
+    return { success: true, fetched_at: now().toISOString(), shifts: shifts };
+  }
+
+  if (scope === 'ideas') {
+    var is = SpreadsheetApp.openById(sheetIds.idea || SHEET_IDS.idea);
+    return {
+      success: true,
+      fetched_at: now().toISOString(),
+      ideas: readIdeas(getTab(is, 'Ideas').getDataRange().getValues()),
+      materials: readMaterials(getTab(is, 'Materials').getDataRange().getValues())
+    };
+  }
+
+  throw new Error('Unknown read scope: ' + scope);
+}
+
+// Change one whitelisted field on one row. Validation and row location live in
+// sheetWrite.gs; this is only the Sheets plumbing.
+function handlePatch(body) {
+  var p       = validatePatch(body);
+  var tabName = p.target === 'idea' ? 'Ideas' : 'Materials';
+  var ss      = SpreadsheetApp.openById((body.sheet_ids || {}).idea || SHEET_IDS.idea);
+  var tab     = getTab(ss, tabName);
+  var rows    = tab.getDataRange().getValues();
+
+  // Located by header, never by letter. If the header is missing, say so
+  // instead of writing into whatever column happens to sit there — Materials
+  // columns E and F look spare and are not.
+  var col = columnForHeader(rows[0], p.header);
+  if (col === -1) {
+    throw new Error('Add a "' + p.header + '" column to the ' + tabName + ' tab first');
+  }
+
+  var row = p.target === 'idea'
+    ? locateIdeaRow(rows, body.ts)
+    : locateMaterialRow(rows, { ts: body.ts, project: body.project, item: body.item });
+
+  if (row === ROW_AMBIGUOUS) {
+    throw new Error('More than one row matches that item — fix it in Sheets');
+  }
+  if (row === ROW_NOT_FOUND) {
+    throw new Error('row not found');
+  }
+
+  tab.getRange(row, col + 1).setValue(p.value);
+  return { success: true, field: p.field, value: p.value };
+}
+
+// Remove one duplicate shift, then repair the pay week it was in.
+function handleDeleteShift(body) {
+  var venue   = String(body.venue || '') === 'Susans' ? 'Susans' : 'Track';
+  var ss      = SpreadsheetApp.openById((body.sheet_ids || {}).tip || SHEET_IDS.tip);
+  var tab     = getTab(ss, venue);
+  var rows    = tab.getDataRange().getValues();
+
+  var row = locateRowByTimestamp(rows, body.ts);
+  if (row === ROW_NOT_FOUND) throw new Error('row not found');
+
+  var cols = {
+    hours: columnForHeader(rows[0], 'Hours'),
+    tips:  venue === 'Track' ? columnForHeader(rows[0], 'Tips') : -1
+  };
+  // Deleting is destructive and irreversible from here, so the row has to
+  // still hold what the page was showing when it was tapped.
+  if (!verifyShiftRow(rows[row - 1], body.expect || {}, cols)) {
+    throw new Error('That shift has changed since the page loaded — reload and try again');
+  }
+
+  var ts = rows[row - 1][0];
+  tab.deleteRow(row);
+
+  // Susans is flat $20/hr with nothing derived from the week, so there is
+  // nothing to repair. Track's stored net for every OTHER row in the week was
+  // computed as though these hours were in it, so they are all now wrong.
+  var recomputed = venue === 'Track' ? recomputeTrackWeek(tab, ts) : [];
+  return { success: true, deleted: ts.toISOString(), recomputed: recomputed };
+}
+
+// Rewrite F-I for every Track row in the pay week containing `ts`.
+//
+// This is the automated form of the hand cleanup done on 2026-07-27, when a
+// duplicate row was deleted and the survivor's take-home was left $23.37 too
+// high because it had been priced against the duplicate's hours.
+function recomputeTrackWeek(tab, ts) {
+  var rows  = tab.getDataRange().getValues();
+  var h     = rows[0];
+  var cTs   = columnForHeader(h, 'Timestamp');
+  var cH    = columnForHeader(h, 'Hours');
+  var cT    = columnForHeader(h, 'Tips');
+  var money = [
+    columnForHeader(h, 'Gross Wage'),
+    columnForHeader(h, 'Est. Net Wage'),
+    columnForHeader(h, 'Total Take-Home'),
+    columnForHeader(h, 'Eff. $/hr')
+  ];
+  for (var m = 0; m < money.length; m++) {
+    if (money[m] === -1) throw new Error('Track is missing its pay columns (F-I)');
+  }
+
+  var members = [];
+  for (var i = 1; i < rows.length; i++) {
+    if (!rows[i] || !(rows[i][cTs] instanceof Date)) continue;
+    if (!samePayWeek(rows[i][cTs], ts)) continue;
+    members.push({
+      row: i + 1,
+      ts: rows[i][cTs],
+      hours: cellNumber(rows[i][cH]) || 0,
+      tips: cellNumber(rows[i][cT]) || 0
+    });
+  }
+  // Chronological: withholding is progressive, so each shift is priced against
+  // the hours logged before it.
+  members.sort(function (a, b) { return a.ts.getTime() - b.ts.getTime(); });
+
+  var pay = recomputeWeek(members);
+  var changed = [];
+  for (var j = 0; j < members.length; j++) {
+    var vals = [pay[j].grossWage, pay[j].netWage, pay[j].takeHome, pay[j].effectiveHourly];
+    // Written cell by cell through the header lookup rather than as one
+    // 4-wide range, so a future column insert between them can't scramble it.
+    for (var k = 0; k < money.length; k++) {
+      tab.getRange(members[j].row, money[k] + 1).setValue(vals[k]);
+    }
+    formatTrackRow(tab, members[j].row);
+    changed.push(members[j].ts.toISOString());
+  }
+  return changed;
 }
 
 // ================================================================

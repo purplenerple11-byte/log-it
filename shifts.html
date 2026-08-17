@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#121316">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="theme.css">
+  <title>Shifts — Log It</title>
+</head>
+<body>
+
+<div class="top">
+  <a class="back" href="index.html" aria-label="Back to Log It">&#8249;</a>
+  <h1>Shifts</h1>
+  <span class="stamp" id="stamp"></span>
+</div>
+
+<div id="gate" class="gate" hidden>
+  <p>This one needs your read key. It lives in Apps Script under
+     <code>READ_TOKEN</code>, and is stored on this device only.</p>
+  <input id="key" type="password" autocomplete="off" placeholder="Read key">
+  <button id="key-save">Unlock</button>
+</div>
+
+<div id="main" hidden>
+  <div class="cards">
+    <div class="card">
+      <div class="k" id="sum-k">Take-home</div>
+      <div class="v" id="sum-v">—</div>
+      <div class="s" id="sum-s"></div>
+    </div>
+    <div class="card">
+      <div class="k">Effective rate</div>
+      <div class="v" id="eff-v">—</div>
+      <div class="s" id="eff-s"></div>
+    </div>
+  </div>
+
+  <div class="seg" role="group" aria-label="Time range">
+    <button id="seg-week" aria-pressed="true">Weekly</button>
+    <button id="seg-month" aria-pressed="false">Monthly</button>
+  </div>
+
+  <div class="legend" id="legend"></div>
+  <div class="chart" id="chart"></div>
+  <div class="xlab" id="xlab"></div>
+
+  <div class="chips" role="group" aria-label="Venue">
+    <button class="chip" data-venue="all" aria-pressed="true">All</button>
+    <button class="chip" data-venue="Track" aria-pressed="false">Track</button>
+    <button class="chip" data-venue="Susans" aria-pressed="false">Susans</button>
+  </div>
+  <div id="log"></div>
+</div>
+
+<div id="boot" class="msg">
+  <div class="skeleton" style="width:60%;margin:0 auto 14px"></div>
+  <div class="skeleton" style="width:85%;margin:0 auto 14px"></div>
+  <div class="skeleton" style="width:70%;margin:0 auto"></div>
+</div>
+
+<script src="shiftStats.js"></script>
+<script src="dataClient.js"></script>
+<script src="ui.js"></script>
+<script>
+const MOCK = new URLSearchParams(location.search).get('mock') === '1';
+
+let SHIFTS = [];
+let grain = 'week';
+let venue = 'all';
+let openRow = null;
+
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------
+// RENDER
+// ---------------------------------------------------------------
+function renderAll() {
+  const shown = filterShifts(SHIFTS, { venue });
+  renderSummary(shown);
+  renderChart(shown);
+  renderLog(shown);
+}
+
+function renderSummary(shown) {
+  const s = summarize(shown);
+  // Track and Susans are reported separately on purpose: Track's figure is net
+  // of withholding, Susans' $20/hr is gross. Adding them would be meaningless.
+  if (venue === 'Susans') {
+    $('sum-k').textContent = 'Gross pay';
+    $('sum-v').textContent = money0(s.susansGross);
+    $('sum-s').textContent = s.susansHours + 'h · before tax';
+    $('eff-v').textContent = '$20.00';
+    $('eff-s').textContent = 'flat, no withholding modeled';
+    return;
+  }
+  $('sum-k').textContent = 'Take-home';
+  $('sum-v').textContent = money0(s.trackTakeHome);
+  $('sum-s').textContent = money0(s.trackTips) + ' tips + ' + money0(s.trackNetWage) + ' wage';
+  $('eff-v').textContent = money(s.trackEffHourly);
+  $('eff-s').textContent = s.trackHours + 'h over ' + s.trackShifts + ' Track shifts'
+    + (s.susansGross ? ' · Susans ' + money0(s.susansGross) + ' gross, separate' : '');
+}
+
+function renderChart(shown) {
+  // The chart plots ONE venue's money at a time. Stacking Susans' gross $20/hr
+  // on top of Track's post-withholding net produces a bar that is part
+  // post-tax and part pre-tax, under a legend that would call all of it wage.
+  // Susans is reported in the summary line and the log instead.
+  const susansOnly = venue === 'Susans';
+  const buckets = bucketShifts(shown, grain).slice(grain === 'week' ? -10 : -8);
+  const value = (b) => (susansOnly ? b.susansGross : b.takeHome);
+  const max = Math.max(1, ...buckets.map(value));
+  const thisKey = grain === 'week' ? currentWeekKey() : currentMonthKey();
+
+  $('legend').innerHTML = susansOnly
+    ? '<span><span class="swatch" style="background:var(--wage)"></span>Gross pay, before tax</span>'
+    : '<span><span class="swatch" style="background:var(--action)"></span>Tips</span>'
+      + '<span><span class="swatch" style="background:var(--wage)"></span>Net wage</span>'
+      + '<span style="margin-left:auto">Track only</span>';
+
+  $('chart').innerHTML = buckets.map((b) => {
+    const tipH = susansOnly ? 0 : Math.round((b.tips / max) * 110);
+    const wageH = Math.round(((value(b) - (susansOnly ? 0 : b.tips)) / max) * 110);
+    // The current bucket is still being earned; at full strength it reads as
+    // a slump every time you look at it mid-week.
+    return '<div class="col' + (b.key === thisKey ? ' partial' : '') + '" '
+      + 'title="' + escapeHtml(b.label + ' — ' + money(value(b))) + '">'
+      + '<div class="tip" style="height:' + tipH + 'px"></div>'
+      + '<div class="wage" style="height:' + wageH + 'px"></div></div>';
+  }).join('') || '<div class="msg">No shifts yet</div>';
+
+  $('xlab').innerHTML = buckets.map((b) => '<div>' + escapeHtml(b.label) + '</div>').join('');
+}
+
+function renderLog(shown) {
+  if (!shown.length) { $('log').innerHTML = '<div class="msg">No shifts here</div>'; return; }
+
+  $('log').innerHTML = shown.map((s, i) => {
+    const isOpen = openRow === i;
+    const amt = s.venue === 'Susans' ? s.grossPay : (s.pay ? s.pay.takeHome : null);
+    const rate = s.venue === 'Susans' ? 20 : (s.pay ? s.pay.effHourly : null);
+    const est = s.pay && s.pay.source === 'computed';
+
+    let meta = s.venue + ' · ' + s.hours + 'h';
+    if (s.tips) meta += ' · ' + money0(s.tips) + ' tips';
+    if (s.dupeOf) meta += ' · <span class="flag">possible duplicate</span>';
+
+    return '<button class="row" data-i="' + i + '">'
+      + '<span><span class="d">' + dayLabel(s.ts) + '</span>'
+      + '<span class="m">' + meta + '</span></span>'
+      + '<span class="amt"><span class="a' + (est ? ' est' : '') + '">'
+      + (amt === null ? '—' : money(amt)) + '</span>'
+      + '<span class="r">' + (rate === null ? 'no pay data' : money(rate) + '/hr')
+      + (est ? ' est.' : '') + '</span></span></button>'
+      + (isOpen ? detailHtml(s, i) : '');
+  }).join('');
+
+  document.querySelectorAll('.row').forEach((el) => {
+    el.onclick = () => {
+      const i = Number(el.dataset.i);
+      openRow = openRow === i ? null : i;
+      renderLog(shown);
+    };
+  });
+  document.querySelectorAll('.del').forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); removeShift(shown[Number(el.dataset.i)]); };
+  });
+}
+
+function detailHtml(s, i) {
+  let h = '<div class="detail">';
+  if (s.notes) h += '<div class="note">' + escapeHtml(s.notes) + '</div>';
+  h += 'Logged ' + timeLabel(s.ts);
+  if (s.clockIn) h += ' · ' + escapeHtml(s.clockIn) + ' to ' + escapeHtml(s.clockOut || '?');
+  if (s.pay) {
+    h += '<br>' + money(s.pay.gross) + ' gross · ' + money(s.pay.net) + ' net wage · '
+       + money(s.tips) + ' tips';
+    if (s.pay.source === 'computed') {
+      h += '<br><span class="est">Estimated — this row predates the pay columns, '
+         + 'so these are recomputed, not stored.</span>';
+    }
+  }
+  if (s.dupeOf) {
+    h += '<div style="margin-top:12px"><button class="danger del" data-i="' + i + '">'
+       + 'Delete this duplicate</button></div>';
+  }
+  return h + '</div>';
+}
+
+function currentWeekKey() {
+  const d = new Date();
+  const back = d.getDay() === 0 ? 6 : d.getDay() - 1;
+  const m = new Date(d.getFullYear(), d.getMonth(), d.getDate() - back);
+  return m.getFullYear() + '-' + String(m.getMonth() + 1).padStart(2, '0')
+       + '-' + String(m.getDate()).padStart(2, '0');
+}
+function currentMonthKey() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+// ---------------------------------------------------------------
+// DELETE
+// ---------------------------------------------------------------
+async function removeShift(s) {
+  const label = dayLabel(s.ts) + ' · ' + s.venue + ' · ' + s.hours + 'h'
+    + (s.tips ? ' · ' + money0(s.tips) + ' tips' : '');
+  // Deleting also rewrites the rest of that Track pay week, so the confirm
+  // says so rather than pretending one row is all that changes.
+  const warn = s.venue === 'Track'
+    ? label + '. The other shifts in that pay week will have their take-home recomputed.'
+    : label + '. This cannot be undone from here.';
+  if (!await uiConfirm('Delete this shift?', warn, { okLabel: 'Delete', danger: true })) return;
+
+  if (MOCK) {
+    SHIFTS = SHIFTS.filter((x) => x !== s);
+    markDuplicates(SHIFTS);
+    openRow = null;
+    setStamp('deleted (mock — nothing was written)');
+    renderAll();
+    return;
+  }
+
+  try {
+    setStamp('deleting…', true);
+    const res = await deleteShift({
+      target: 'shift', venue: s.venue, ts: s.ts.toISOString(),
+      expect: { hours: s.hours, tips: s.tips },
+      sheet_ids: { tip: sheetId('tip') }
+    });
+    setStamp(res.recomputed.length
+      ? 'deleted · ' + res.recomputed.length + ' row(s) in that week recomputed'
+      : 'deleted');
+    load();
+  } catch (err) {
+    await uiAlert("Didn't delete", err.message);
+    setStamp('');
+  }
+}
+
+// ---------------------------------------------------------------
+// LOAD
+// ---------------------------------------------------------------
+function setStamp(text, busy) {
+  $('stamp').textContent = text;
+  $('stamp').className = 'stamp' + (busy ? ' busy' : '');
+}
+
+function show(which) {
+  $('boot').hidden = which !== 'boot';
+  $('gate').hidden = which !== 'gate';
+  $('main').hidden = which !== 'main';
+}
+
+function accept(data, fresh) {
+  SHIFTS = hydrateShifts(data.shifts);
+  show('main');
+  setStamp(fresh ? '' : 'as of ' + timeLabel(new Date(data.fetched_at)), !fresh);
+  renderAll();
+}
+
+function load() {
+  if (MOCK) { accept(mockShiftsResponse(), true); return; }
+
+  loadScope('shifts', { tip: sheetId('tip') }, accept, (err, hadCache) => {
+    if (err.kind === 'unauthorized' && !hadCache) { show('gate'); return; }
+    setStamp(hadCache ? 'offline — showing last known' : err.message);
+    if (!hadCache) { show('main'); $('log').innerHTML = '<div class="msg">' + escapeHtml(err.message) + '</div>'; }
+  });
+}
+
+// ---------------------------------------------------------------
+// WIRING
+// ---------------------------------------------------------------
+$('seg-week').onclick = () => { grain = 'week'; syncSeg(); renderAll(); };
+$('seg-month').onclick = () => { grain = 'month'; syncSeg(); renderAll(); };
+function syncSeg() {
+  $('seg-week').setAttribute('aria-pressed', String(grain === 'week'));
+  $('seg-month').setAttribute('aria-pressed', String(grain === 'month'));
+}
+
+document.querySelectorAll('.chip').forEach((c) => {
+  c.onclick = () => {
+    venue = c.dataset.venue;
+    openRow = null;
+    document.querySelectorAll('.chip').forEach((x) =>
+      x.setAttribute('aria-pressed', String(x.dataset.venue === venue)));
+    renderAll();
+  };
+});
+
+$('key-save').onclick = () => {
+  const v = $('key').value.trim();
+  if (!v) return;
+  setReadToken(v);
+  show('boot');
+  load();
+};
+
+if (MOCK) {
+  // The fixture runs on the real server modules, so ?mock=1 proves the read
+  // pipeline end to end without a deploy. Dev only — production never loads
+  // server logic.
+  let left = 3;
+  for (const src of ['server/trackPay.js', 'server/readApi.js', 'mockSheet.js']) {
+    const el = document.createElement('script');
+    el.src = src + '?cb=' + Date.now();
+    el.async = false;
+    el.onload = () => { if (--left === 0) load(); };
+    document.head.appendChild(el);
+  }
+} else {
+  load();
+}
+</script>
+</body>
+</html>
