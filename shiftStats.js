@@ -32,7 +32,10 @@ function bucketShifts(shifts, granularity) {
 
     const key = granularity === 'month'
       ? ts.getFullYear() + '-' + String(ts.getMonth() + 1).padStart(2, '0')
-      : s.week;
+      : granularity === 'day'
+        ? ts.getFullYear() + '-' + String(ts.getMonth() + 1).padStart(2, '0')
+          + '-' + String(ts.getDate()).padStart(2, '0')
+        : s.week;
     if (!key) continue;
 
     if (!byKey.has(key)) {
@@ -64,9 +67,16 @@ function bucketShifts(shifts, granularity) {
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 function bucketLabel(key, granularity) {
   const p = key.split('-');
   if (granularity === 'month') return MONTH_NAMES[parseInt(p[1], 10) - 1] || '';
+  if (granularity === 'day') {
+    // Built componentwise: new Date('2026-08-14') is UTC midnight, which is the
+    // previous day in any timezone behind UTC — and would name the wrong day.
+    return DAY_ABBR[new Date(+p[0], +p[1] - 1, +p[2]).getDay()];
+  }
   // Numeric, because ten "Jun 15"-style labels wrap to two lines at 375px and
   // turn the axis into a thicket.
   return parseInt(p[1], 10) + '/' + parseInt(p[2], 10);
@@ -121,7 +131,10 @@ function compactMoney(n) {
 function filterShifts(shifts, opts) {
   if (!Array.isArray(shifts)) return [];
   const venue = (opts && opts.venue) || 'all';
-  return shifts.filter((s) => s && (venue === 'all' || s.venue === venue));
+  const week = (opts && opts.week) || null;
+  return shifts.filter((s) => s
+    && (venue === 'all' || s.venue === venue)
+    && (!week || s.week === week));
 }
 
 // The server sends dates as ISO strings over the wire; every consumer here

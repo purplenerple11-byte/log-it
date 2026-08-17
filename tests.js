@@ -1584,6 +1584,39 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(s.trackTakeHome, 0);
   });
 
+  test('bucketShifts: day granularity groups by calendar day', () => {
+    const b = bucketShifts([
+      TRACK(new Date(2026, 7, 14, 19, 49), 9.48, 540, 659.32, 119.32),
+      TRACK(new Date(2026, 7, 15, 20, 0), 9.75, 435, 554.02, 119.02)
+    ], 'day');
+    assertEq(b.length, 2);
+    assertEq(b[0].key, '2026-08-14');
+    assertEq(b[0].label, 'Fri');
+    assertEq(b[1].label, 'Sat');
+  });
+  test('bucketShifts: two shifts on one day become one block', () => {
+    const b = bucketShifts([
+      TRACK(new Date(2026, 7, 14, 11, 0), 4, 100, 150, 50),
+      TRACK(new Date(2026, 7, 14, 19, 0), 5, 200, 260, 60)
+    ], 'day');
+    assertEq(b.length, 1);
+    assertEq(b[0].takeHome, 410);
+  });
+
+  test('filterShifts: by week', () => {
+    const inWeek = TRACK(new Date(2026, 7, 2, 19, 30), 9.17, 242, 353.86, 111.86);
+    const other  = TRACK(new Date(2026, 6, 23, 18, 53), 9.03, 350, 482.78, 132.78);
+    assertEq(filterShifts([inWeek, other], { week: '2026-07-27' }).length, 1);
+    assertEq(filterShifts([inWeek, other], { week: null }).length, 2);
+  });
+  test('filterShifts: venue and week together', () => {
+    const t = TRACK(new Date(2026, 7, 2, 19, 30), 9.17, 242, 353.86, 111.86);
+    const s = SUSANS(new Date(2026, 7, 1, 14, 0), 5, 100);
+    assertEq(filterShifts([t, s], { venue: 'Track', week: '2026-07-27' }).length, 1);
+    assertEq(filterShifts([t, s], { venue: 'Susans', week: '2026-07-27' }).length, 1);
+    assertEq(filterShifts([t, s], { venue: 'Susans', week: '2026-08-03' }).length, 0);
+  });
+
   test('trimLeadingEmpty: drops empty buckets before the data starts', () => {
     const b = [{ key: 'a', takeHome: 0 }, { key: 'b', takeHome: 0 },
                { key: 'c', takeHome: 480 }, { key: 'd', takeHome: 220 }];

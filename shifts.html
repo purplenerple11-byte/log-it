@@ -46,6 +46,7 @@
   <div class="legend" id="legend"></div>
   <div class="chart" id="chart"></div>
   <div class="xlab" id="xlab"></div>
+  <div class="zoomhint" id="zoomhint"></div>
 
   <div class="chips" role="group" aria-label="Venue">
     <button class="chip" data-venue="all" aria-pressed="true">All</button>
@@ -71,6 +72,8 @@ let SHIFTS = [];
 let grain = 'week';
 let venue = 'all';
 let openRow = null;
+let zoomWeek = null;   // bucket key of the drilled-into week, or null
+let legendBase = '';   // stashed so unzooming restores it without a full render
 
 const $ = (id) => document.getElementById(id);
 
@@ -78,9 +81,13 @@ const $ = (id) => document.getElementById(id);
 // RENDER
 // ---------------------------------------------------------------
 function renderAll() {
-  const shown = filterShifts(SHIFTS, { venue });
+  const byVenue = filterShifts(SHIFTS, { venue });
+  // The chart always draws every week — that is what you click to drill in.
+  // The summary and the log follow the drill-down, so the big number on screen
+  // always describes exactly the rows listed underneath it.
+  const shown = filterShifts(byVenue, { week: zoomWeek });
   renderSummary(shown);
-  renderChart(shown);
+  renderChart(byVenue);
   renderLog(shown);
 }
 
@@ -119,11 +126,12 @@ function renderChart(shown) {
   const max = Math.max(1, ...buckets.map(value));
   const thisKey = grain === 'week' ? currentWeekKey() : currentMonthKey();
 
-  $('legend').innerHTML = susansOnly
+  legendBase = susansOnly
     ? '<span><span class="swatch" style="background:var(--wage)"></span>Gross pay, before tax</span>'
     : '<span><span class="swatch" style="background:var(--action)"></span>Tips</span>'
       + '<span><span class="swatch" style="background:var(--wage)"></span>Net wage</span>'
       + '<span style="margin-left:auto">Track take-home</span>';
+  $('legend').innerHTML = legendBase;
 
   $('chart').innerHTML = buckets.map((b) => {
     const tipH = susansOnly ? 0 : Math.round((b.tips / max) * 110);
@@ -132,13 +140,107 @@ function renderChart(shown) {
     // nothing on a touchscreen, which is where this is actually read.
     // The current bucket is still being earned; at full strength it reads as
     // a slump every time you look at it mid-week.
-    return '<div class="col' + (b.key === thisKey ? ' partial' : '') + '">'
+    return '<div class="col' + (b.key === thisKey ? ' partial' : '') + '"'
+      + ' data-key="' + escapeHtml(b.key) + '" role="button" tabindex="0"'
+      + ' aria-label="' + escapeHtml(b.label + ', ' + money(value(b))) + '">'
       + '<div class="val">' + compactMoney(value(b)) + '</div>'
       + '<div class="tip" style="height:' + tipH + 'px"></div>'
       + '<div class="wage" style="height:' + wageH + 'px"></div></div>';
   }).join('') || '<div class="msg">No shifts yet</div>';
 
   $('xlab').innerHTML = buckets.map((b) => '<div>' + escapeHtml(b.label) + '</div>').join('');
+
+  document.querySelectorAll('.chart .col').forEach((c) => {
+    // Stash the week/tips view so unzooming can put it back verbatim rather
+    // than re-rendering the whole chart, which would kill the transition.
+    c._base = c.innerHTML;
+    // Monthly bars key on a month, not a pay week, so drilling in would filter
+    // the log by a key no shift carries and empty the page. Weekly only.
+    if (grain !== 'week') { c.style.cursor = 'default'; c.removeAttribute('role'); return; }
+    const go = () => toggleZoom(c.dataset.key);
+    c.onclick = go;
+    c.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } };
+  });
+  applyZoom(shown);
+}
+
+// Drilling in and out mutates the existing columns instead of re-rendering.
+// Replacing innerHTML would swap in brand-new nodes, which paint at their final
+// state with no transition at all — the same reason index.html needs a keyframe
+// for the Today fan.
+function applyZoom(shown) {
+  const chart = $('chart');
+  const cols = Array.from(chart.querySelectorAll('.col'));
+  const idx = zoomWeek ? cols.findIndex((c) => c.dataset.key === zoomWeek) : -1;
+
+  if (idx === -1) {
+    chart.classList.remove('zoomed');
+    cols.forEach((c) => {
+      c.classList.remove('out-left', 'out-right', 'zoom');
+      if (c._base && c.innerHTML !== c._base) c.innerHTML = c._base;
+    });
+    $('zoomhint').innerHTML = '';
+    $('xlab').style.display = '';
+    if (legendBase) $('legend').innerHTML = legendBase;
+    return;
+  }
+
+  chart.classList.add('zoomed');
+  cols.forEach((c, i) => {
+    c.classList.toggle('out-left', i < idx);
+    c.classList.toggle('out-right', i > idx);
+    c.classList.toggle('zoom', i === idx);
+  });
+  fillDays(cols[idx], shown);
+
+  // The week axis would otherwise still list every week underneath a chart
+  // that now shows exactly one, and the tips/wage legend no longer describes
+  // what the blocks are.
+  $('xlab').style.display = 'none';
+  $('legend').innerHTML = '<span>Each block is a day</span>'
+    + '<span style="margin-left:auto">'
+    + (venue === 'Susans' ? 'gross pay' : 'take-home') + '</span>';
+
+  const label = cols[idx].getAttribute('aria-label') || '';
+  $('zoomhint').innerHTML = 'Week of <b>' + escapeHtml(label.split(',')[0])
+    + '</b> · tap the bar to go back';
+}
+
+// The bar becomes one block per day worked, each sized by what that day made.
+// Heights stay strictly proportional — a day is not padded up to fit its label;
+// the label is dropped instead, because a block that lies about its size is
+// worse than one you have to read from the row below.
+function fillDays(col, shown) {
+  const susansOnly = venue === 'Susans';
+  const days = bucketShifts(filterShifts(shown, { week: zoomWeek }), 'day');
+  const dayValue = (b) => (susansOnly ? b.susansGross : b.takeHome);
+  const total = days.reduce((n, b) => n + dayValue(b), 0) || 1;
+  const H = 188;
+
+  // Reversed: flex-end stacks the first child at the top, and the week should
+  // read Monday at the bottom upward.
+  col.innerHTML = days.slice().reverse().map((b, n) => {
+    const h = Math.max(4, Math.round((dayValue(b) / total) * H));
+    const room = h >= 17;
+    return '<div class="day' + (h < 26 ? ' thin' : '') + '" style="height:' + h
+      + 'px;--i:' + n + '">'
+      + (room ? '<span>' + escapeHtml(b.label) + '</span><span>'
+                + compactMoney(dayValue(b)) + '</span>' : '')
+      + '</div>';
+  }).join('');
+}
+
+// Deliberately does NOT call renderAll: that rebuilds the chart's innerHTML,
+// and brand-new nodes paint at their final state with no transition. Only the
+// summary and log are re-rendered; the chart is mutated in place.
+function toggleZoom(key) {
+  zoomWeek = zoomWeek === key ? null : key;
+  openRow = null;
+  const byVenue = filterShifts(SHIFTS, { venue });
+  const shown = filterShifts(byVenue, { week: zoomWeek });
+  renderSummary(shown);
+  renderLog(shown);
+  applyZoom(byVenue);
 }
 
 function renderLog(shown) {
@@ -282,7 +384,7 @@ function load() {
 // WIRING
 // ---------------------------------------------------------------
 $('seg-week').onclick = () => { grain = 'week'; syncSeg(); renderAll(); };
-$('seg-month').onclick = () => { grain = 'month'; syncSeg(); renderAll(); };
+$('seg-month').onclick = () => { grain = 'month'; zoomWeek = null; syncSeg(); renderAll(); };
 function syncSeg() {
   $('seg-week').setAttribute('aria-pressed', String(grain === 'week'));
   $('seg-month').setAttribute('aria-pressed', String(grain === 'month'));
@@ -292,6 +394,11 @@ document.querySelectorAll('.chip').forEach((c) => {
   c.onclick = () => {
     venue = c.dataset.venue;
     openRow = null;
+    // Changing venue is a context switch, so the drill-down is dropped. Keeping
+    // it strands you when the new venue has no shifts that week: the bar is
+    // gone from the chart, so there is nothing left to tap to get back, but the
+    // log is still filtered to it and reads as empty for no visible reason.
+    zoomWeek = null;
     document.querySelectorAll('.chip').forEach((x) =>
       x.setAttribute('aria-pressed', String(x.dataset.venue === venue)));
     renderAll();
