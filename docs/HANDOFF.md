@@ -320,18 +320,16 @@ PWA (index.html, GitHub Pages)
    **`READ_TOKEN`** = a long random string. Save it somewhere; clearing phone
    storage means re-entering it. Until it is set, every read is denied (that
    is deliberate — it fails closed).
-4. In the Apps Script editor (project **"Log It - Router"**), whose files are
-   actually named `Code`, `tipRouter`, `trackPay` — *not* the repo filenames:
-   - Replace the whole contents of **`Code`** with `server/routerWebApp.gs`.
-   - Add a new file **`readApi`** ← `server/readApi.js`.
-   - Add a new file **`sheetWrite`** ← `server/sheetWrite.js`.
-   - Leave `tipRouter` and `trackPay` alone — unchanged in v4.8.
-   ⚠ Do **not** paste them under the repo's filenames. Adding a
-   `routerWebApp` next to the existing `Code` would leave two `doPost`
-   definitions in one project; Apps Script shares a single global scope, so
-   whichever loads last silently wins.
-   Then **Deploy → Manage deployments → pencil → Version: New version**.
-   Not "New deployment".
+4. ~~Paste the server files.~~ **Already done, 2026-08-17** — Claude pushed
+   them with `clasp push`, and a pull-back diff confirms all five files match
+   the repo byte for byte. The live `Code` reads
+   `v4.8 — Read + Write-Back Ops`.
+   **Not yet published.** The deployment `AKfycbx4Vyy…` still points at **@18**,
+   so the phone is still running v4.7 and nothing has changed for logging.
+   Publishing = bump that deployment to a new version, either in the editor
+   (Deploy → Manage deployments → pencil → Version: New version) or with
+   `clasp`. Do it after steps 1–3, or the read pages will just show the
+   read-key gate.
 5. Open the Shifts page on the phone and paste the token when asked.
 
 ## Key facts (don't re-litigate)

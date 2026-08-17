@@ -127,11 +127,20 @@ under `?mock=1`.
   project, and Apps Script shares one global scope per project, so whichever loads last silently
   wins. `server/routerWebApp.gs` is the source of truth by convention
   only; the user's Apps Script editor is the actual runtime.
-  **Claude can read the live project** (Drive `download_file_content` with
+  **Claude can read AND write the live project via `clasp`** (v3.3.0, installed globally, logged
+  in as the user). Write a `.clasp.json` holding the script id into a scratch dir, then
+  `clasp pull` / `clasp push --force` / `clasp list-deployments`. **Push replaces the whole
+  project — every file must be present locally or it is deleted remotely.** The live file set is
+  `appsscript.json`, `Code`, `tipRouter`, `trackPay`, `readApi`, `sheetWrite`.
+  Drive also works read-only for a quick diff (`download_file_content` with
   `exportMimeType: application/vnd.google-apps.script+json` returns base64 of a
-  `{files:[{name,type,source}]}` bundle) — useful for diffing live against the repo before and
-  after a paste. It **cannot write or deploy**: Drive's `update_file` is metadata-only, and
-  versioning a deployment needs the Apps Script API, which isn't available here. After any server change, remind the
+  `{files:[{name,type,source}]}` bundle).
+  **Push and publish are separate.** A push only moves the project's HEAD; the `/exec` URL keeps
+  serving whatever version the deployment points at (currently `AKfycbx4Vyy…` @18), so a push
+  alone cannot break the live app. Publishing means bumping that deployment to a new version —
+  do it only when the user says so, since it is a live deploy.
+  **Still manual, no CLI and no API:** Script Properties (so `GEMINI_API_KEY` and `READ_TOKEN`
+  are always a hand paste) and anything needing a function run, including triggers. After any server change, remind the
   user to paste it in and publish — nothing happens otherwise. Publishing means **Deploy →
   Manage deployments → pencil → Version: New version**, *not* "New deployment": a new
   deployment mints a fresh `/exec` URL, and the current one is baked into `CFG_DEFAULTS`,
