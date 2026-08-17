@@ -197,9 +197,11 @@ function applyZoom(shown) {
   // that now shows exactly one, and the tips/wage legend no longer describes
   // what the blocks are.
   $('xlab').style.display = 'none';
-  $('legend').innerHTML = '<span>Each block is a day</span>'
-    + '<span style="margin-left:auto">'
-    + (venue === 'Susans' ? 'gross pay' : 'take-home') + '</span>';
+  $('legend').innerHTML = (venue === 'Susans'
+    ? '<span><span class="swatch" style="background:var(--wage)"></span>Gross pay, before tax</span>'
+    : '<span><span class="swatch" style="background:var(--action)"></span>Tips</span>'
+      + '<span><span class="swatch" style="background:var(--wage)"></span>Net wage</span>')
+    + '<span style="margin-left:auto">each block is a day</span>';
 
   const label = cols[idx].getAttribute('aria-label') || '';
   $('zoomhint').innerHTML = 'Week of <b>' + escapeHtml(label.split(',')[0])
@@ -220,19 +222,23 @@ function fillDays(col, shown) {
   // Reversed: flex-end stacks the first child at the top, and the week should
   // read Monday at the bottom upward.
   col.innerHTML = days.slice().reverse().map((b, n) => {
-    const h = Math.max(4, Math.round((dayValue(b) / total) * H));
+    const dv = dayValue(b);
+    const h = Math.max(4, Math.round((dv / total) * H));
+    // Each day keeps the same tips-on-wage split as the week bars it came
+    // from. A solid block would have thrown that away — which is the whole
+    // reason for two colours in the first place.
+    const tipsH = susansOnly ? 0 : Math.round((b.tips / (dv || 1)) * h);
     const room = h >= 17;
     return '<div class="day' + (h < 26 ? ' thin' : '') + '" style="height:' + h
       + 'px;--i:' + n + '">'
-      + (room ? '<span>' + escapeHtml(b.label) + '</span><span>'
-                + compactMoney(dayValue(b)) + '</span>' : '')
+      + '<div class="dtip" style="height:' + tipsH + 'px"></div>'
+      + '<div class="dwage" style="height:' + (h - tipsH) + 'px"></div>'
+      + (room ? '<div class="dlab"><span>' + escapeHtml(b.label) + '</span><span>'
+                + compactMoney(dv) + '</span></div>' : '')
       + '</div>';
   }).join('');
 }
 
-// Deliberately does NOT call renderAll: that rebuilds the chart's innerHTML,
-// and brand-new nodes paint at their final state with no transition. Only the
-// summary and log are re-rendered; the chart is mutated in place.
 function toggleZoom(key) {
   zoomWeek = zoomWeek === key ? null : key;
   openRow = null;

@@ -61,24 +61,32 @@ a { color: inherit; text-decoration: none; }
   flex: 1 1 0; display: flex; flex-direction: column; justify-content: flex-end;
   gap: 2px; min-width: 0; cursor: pointer;
   transition: flex-grow .42s cubic-bezier(.4,0,.2,1),
+              flex-basis .42s cubic-bezier(.4,0,.2,1),
               opacity .26s ease,
               transform .42s cubic-bezier(.4,0,.2,1);
 }
 /* Drill-down. The neighbours slide out the side they already sit on, so the
    selected week appears to expand in place rather than being replaced. */
-.chart.zoomed { gap: 0; height: 214px; }
+.chart.zoomed { gap: 0; height: 214px; justify-content: center; }
 .chart .col.out-left  { flex-grow: 0.0001; opacity: 0; transform: translateX(-70px); pointer-events: none; }
 .chart .col.out-right { flex-grow: 0.0001; opacity: 0; transform: translateX(70px);  pointer-events: none; }
-.chart .col.zoom { flex-grow: 1; }
+.chart .col.zoom { flex-grow: 0; flex-basis: 124px; }
 .day {
-  background: var(--action); color: #121316; border-radius: 3px;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 9px; font-size: 11px; overflow: hidden; white-space: nowrap;
-  transform-origin: bottom;
+  position: relative; display: flex; flex-direction: column; justify-content: flex-end;
+  border-radius: 3px; overflow: hidden; transform-origin: bottom;
   animation: day-in .36s cubic-bezier(.4,0,.2,1) both;
   animation-delay: calc(var(--i) * 45ms);
 }
-.day.thin { padding: 0 4px; font-size: 10px; }
+/* Same two colours as the week bars, so a day reads the same way the chart
+   above it does: tips sitting on top of net wage. */
+.day .dtip  { background: var(--action); }
+.day .dwage { background: var(--wage); }
+.day .dlab {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: space-between; padding: 0 8px; font-size: 11px;
+  color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.55); white-space: nowrap;
+}
+.day.thin .dlab { font-size: 10px; padding: 0 5px; }
 @keyframes day-in {
   from { transform: scaleY(.04); opacity: 0; }
   to   { transform: scaleY(1);   opacity: 1; }
