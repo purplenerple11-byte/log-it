@@ -324,13 +324,48 @@ PWA (index.html, GitHub Pages)
    them with `clasp push`, and a pull-back diff confirms all five files match
    the repo byte for byte. The live `Code` reads
    `v4.8 — Read + Write-Back Ops`.
-   **Not yet published.** The deployment `AKfycbx4Vyy…` still points at **@18**,
-   so the phone is still running v4.7 and nothing has changed for logging.
-   Publishing = bump that deployment to a new version, either in the editor
-   (Deploy → Manage deployments → pencil → Version: New version) or with
-   `clasp`. Do it after steps 1–3, or the read pages will just show the
-   read-key gate.
+   **Published 2026-08-17**: deployment `AKfycbx4Vyy…` now serves **@19**,
+   same `/exec` URL. Front end merged to `Main` and live on Pages.
 5. Open the Shifts page on the phone and paste the token when asked.
+
+**All of the above is done.** The only remaining user step is #5.
+
+19. **Read/interact front end** (router v4.8, `feat/read-front-end`). Two read
+    surfaces over the same sheets the logger writes to, plus a narrow
+    write-back path. Spec: `docs/specs/2026-08-16-read-front-end-design.md`.
+    - `doPost` dispatches on `op`; absent/`log` is the old path byte for byte.
+      Reads answer **before** the script lock, `patch`/`delete` take it. The
+      token gates read/patch/delete only and **fails closed when unset**.
+    - `shifts.html` (trends + filterable log) and `ideas.html`
+      (Active/Done/Archived, next step, materials with prices). Cache-first
+      render, because Apps Script cold starts here have hit 268s.
+    - 82 new tests (137 → 219).
+    - **Three bugs the test suite could not have caught**, each found by
+      looking at the running thing:
+      1. The `?test=1` injector loaded `tests.js` through a plain
+         `<script src>` with no cache-buster, so an edited suite could be
+         served stale. It reported `137 passed` against a file holding 22 new
+         tests. `fetchText` had guarded this for *fetched* files only.
+      2. The chart stacked Susans' gross on Track's net under a legend reading
+         "Net wage" — the exact post-tax/pre-tax mix the totals were built to
+         avoid, kept out of the numbers and reintroduced in the picture.
+         Caught from a screenshot while 198 tests were green.
+      3. `dataClient` sent an empty sheet id on any device that had never
+         opened the ⚙ panel, because `LS.get` falls back to `CFG_DEFAULTS`
+         **without writing to localStorage**. Every fresh device, including the
+         phone. `?mock=1` structurally could not catch it — the mock never
+         sends a sheet id. Found on the first real request.
+    - Verified against production, not only the suite: 47 shifts (34 Track /
+      13 Susans), 16 pre-v4.5 rows recomputed and 18 read from the sheet,
+      Aug 2 returning 353.86 at 38.59/hr, the 7/15 duplicate flagged with its
+      original untouched, 25 ideas reading Active from blank cells, the
+      untimestamped immersion-blender material surfacing rather than being
+      dropped, all five patch guards refusing, and a material round-tripped
+      true→false leaving the sheet as it started.
+    - **Claude can now push to Apps Script** via `clasp` (3.3.0, authenticated).
+      Push ≠ publish: a push moves HEAD only, the `/exec` URL keeps serving the
+      version the deployment names. Script Properties remain a hand paste —
+      no CLI, no API.
 
 ## Key facts (don't re-litigate)
 
