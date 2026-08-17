@@ -1601,6 +1601,30 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(inPage && inClient, 'both files must declare a router URL');
     assertEq(inClient[1], inPage[1], 'the two router URLs have drifted apart');
   });
+  test('dataClient: carries sheet id defaults, not empty strings', async () => {
+    // index.html resolves sheet ids through LS.get, which falls back to
+    // CFG_DEFAULTS *without writing to localStorage*. A device that never
+    // opened the ⚙ panel therefore has no sheet_tip key, so reading it with an
+    // '' fallback sent '' to the server, which fell back to its own placeholder
+    // and answered "Illegal spreadsheet id or key: YOUR_TIPS_SHEET_ID".
+    // Verified against the live endpoint on 2026-08-17.
+    const [page, client] = await Promise.all([fetchText('index.html'), fetchText('dataClient.js')]);
+    for (const kind of ['tip', 'idea']) {
+      const inPage = new RegExp('sheet_' + kind + ":\\s*'([^']+)'").exec(page);
+      const inClient = new RegExp('\\b' + kind + ":\\s*'([^']+)'").exec(client);
+      assert(inPage, 'index.html must define sheet_' + kind);
+      assert(inClient, 'dataClient.js must default sheet ' + kind);
+      assertEq(inClient[1], inPage[1], 'sheet ' + kind + ' id has drifted');
+      assert(inClient[1].indexOf('YOUR_') !== 0, 'placeholder id in dataClient');
+    }
+  });
+  for (const page of ['shifts.html', 'ideas.html']) {
+    test(page + ': never asks for a sheet id with an empty fallback', async () => {
+      const src = await fetchText(page);
+      assert(!/sheetId\(\s*'[a-z]+'\s*,\s*''\s*\)/.test(src),
+        'an empty fallback silently sends no sheet id at all');
+    });
+  }
   for (const page of ['shifts.html', 'ideas.html']) {
     test(page + ': production never loads server logic', async () => {
       const src = await fetchText(page);

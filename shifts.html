@@ -229,7 +229,7 @@ async function removeShift(s) {
     const res = await deleteShift({
       target: 'shift', venue: s.venue, ts: s.ts.toISOString(),
       expect: { hours: s.hours, tips: s.tips },
-      sheet_ids: { tip: sheetId('tip', '') }
+      sheet_ids: { tip: sheetId('tip') }
     });
     setStamp(res.recomputed.length
       ? 'deleted · ' + res.recomputed.length + ' row(s) in that week recomputed'
@@ -265,7 +265,7 @@ function accept(data, fresh) {
 function load() {
   if (MOCK) { accept(mockShiftsResponse(), true); return; }
 
-  loadScope('shifts', { tip: sheetId('tip', '') }, accept, (err, hadCache) => {
+  loadScope('shifts', { tip: sheetId('tip') }, accept, (err, hadCache) => {
     if (err.kind === 'unauthorized' && !hadCache) { show('gate'); return; }
     setStamp(hadCache ? 'offline — showing last known' : err.message);
     if (!hadCache) { show('main'); $('log').innerHTML = '<div class="msg">' + escapeHtml(err.message) + '</div>'; }

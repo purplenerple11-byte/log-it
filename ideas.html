@@ -213,7 +213,7 @@ function cycleStatus(key) {
   stuck.add(key);
   send(key, {
     target: 'idea', ts: i.ts ? i.ts.toISOString() : null,
-    field: 'status', value: now, sheet_ids: { idea: sheetId('idea', '') }
+    field: 'status', value: now, sheet_ids: { idea: sheetId('idea') }
   }, () => { i.status = now; }, () => { i.status = was; });
 }
 
@@ -225,7 +225,7 @@ async function editNextStep(key) {
   if (next === null || next === was) return;
   send(key, {
     target: 'idea', ts: i.ts ? i.ts.toISOString() : null,
-    field: 'next_step', value: next, sheet_ids: { idea: sheetId('idea', '') }
+    field: 'next_step', value: next, sheet_ids: { idea: sheetId('idea') }
   }, () => { i.nextStep = next; }, () => { i.nextStep = was; });
 }
 
@@ -237,7 +237,7 @@ function toggleMaterial(key, item) {
   send(key, {
     target: 'material', ts: m.ts ? m.ts.toISOString() : null,
     project: m.project, item: m.item, field: 'acquired', value: !was,
-    sheet_ids: { idea: sheetId('idea', '') }
+    sheet_ids: { idea: sheetId('idea') }
   }, () => { m.acquired = !was; }, () => { m.acquired = was; });
 }
 
@@ -258,7 +258,7 @@ async function editPrice(key, item) {
   send(key, {
     target: 'material', ts: m.ts ? m.ts.toISOString() : null,
     project: m.project, item: m.item, field: 'price', value: value,
-    sheet_ids: { idea: sheetId('idea', '') }
+    sheet_ids: { idea: sheetId('idea') }
   }, () => { m.price = value === '' ? null : value; }, () => { m.price = was; });
 }
 
@@ -288,7 +288,7 @@ function accept(data, fresh) {
 function load() {
   if (MOCK) { accept(mockIdeasResponse(), true); return; }
 
-  loadScope('ideas', { idea: sheetId('idea', '') }, accept, (err, hadCache) => {
+  loadScope('ideas', { idea: sheetId('idea') }, accept, (err, hadCache) => {
     if (err.kind === 'unauthorized' && !hadCache) { show('gate'); return; }
     setStamp(hadCache ? 'offline — showing last known' : err.message);
     if (!hadCache) { show('main'); $('list').innerHTML = '<div class="msg">' + escapeHtml(err.message) + '</div>'; }

@@ -15,9 +15,21 @@
 
 // Duplicated from CFG_DEFAULTS in index.html on purpose — index.html is the
 // logging path and is not being refactored to share a config file for this.
-// A test asserts the two strings are identical, so they cannot drift silently.
+// A test asserts every one of these matches index.html, so they cannot drift.
+//
+// The sheet ids MUST be here, not just the router URL. index.html resolves
+// them through LS.get, which falls back to CFG_DEFAULTS *without ever writing
+// to localStorage* — so on a device that has never opened the ⚙ panel there is
+// no `sheet_tip` key at all. Reading '' and sending it made the server fall
+// back to its own placeholder and answer
+// "Illegal spreadsheet id or key: YOUR_TIPS_SHEET_ID". Caught against the live
+// endpoint, invisible under ?mock=1 because the mock never sends sheet ids.
 const DC_ROUTER_DEFAULT =
   'https://script.google.com/macros/s/AKfycbx4VyyLzfafaKkAsNP2LUbSaLOFxS-vX34c-3lHIQPLIHIoqBqOEXghIRzS4n8vQ-24/exec';
+const DC_SHEET_DEFAULTS = {
+  tip:  '18KnFW0OxCWJ0PaAoRc7Yds0a6oKjsNFocUA7xhm8AlM',
+  idea: '1H3ATTJXR-WKQuKmcFknbEraSxzGNEazsUtl1Y53kD8k'
+};
 
 const DC_TIMEOUT_MS = 45000;   // reads can be slower than a log; nothing retries here
 
@@ -31,7 +43,7 @@ function lsSet(k, v) {
 function readToken()          { return lsGet('read_token', ''); }
 function setReadToken(v)      { lsSet('read_token', String(v || '').trim()); }
 function routerUrl()          { return lsGet('router_url', DC_ROUTER_DEFAULT); }
-function sheetId(kind, dflt)  { return lsGet('sheet_' + kind, dflt); }
+function sheetId(kind)        { return lsGet('sheet_' + kind, DC_SHEET_DEFAULTS[kind] || ''); }
 
 class ReadError extends Error {
   constructor(kind, message) {
