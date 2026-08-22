@@ -217,7 +217,7 @@ function fillDays(col, shown) {
   const days = bucketShifts(filterShifts(shown, { week: zoomWeek }), 'day');
   const dayValue = (b) => (susansOnly ? b.susansGross : b.takeHome);
   const total = days.reduce((n, b) => n + dayValue(b), 0) || 1;
-  const H = 188;
+  const H = 224;
 
   // Reversed: flex-end stacks the first child at the top, and the week should
   // read Monday at the bottom upward.
@@ -233,8 +233,11 @@ function fillDays(col, shown) {
       + 'px;--i:' + n + '">'
       + '<div class="dtip" style="height:' + tipsH + 'px"></div>'
       + '<div class="dwage" style="height:' + (h - tipsH) + 'px"></div>'
-      + (room ? '<div class="dlab"><span>' + escapeHtml(b.label) + '</span><span>'
-                + compactMoney(dv) + '</span></div>' : '')
+      + (room ? '<div class="dlab"><span>' + escapeHtml(b.label) + '</span>'
+                + '<span>' + (susansOnly ? '<span class="lt">' + compactMoney(dv) + '</span>'
+                    : '<span class="lt">' + compactMoney(b.tips) + '</span>'
+                      + '<span class="lw">+ ' + compactMoney(b.netWage) + '</span>')
+                + '</span></div>' : '')
       + '</div>';
   }).join('');
 }

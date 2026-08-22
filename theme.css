@@ -67,7 +67,7 @@ a { color: inherit; text-decoration: none; }
 }
 /* Drill-down. The neighbours slide out the side they already sit on, so the
    selected week appears to expand in place rather than being replaced. */
-.chart.zoomed { gap: 0; height: 214px; justify-content: center; }
+.chart.zoomed { gap: 0; height: 250px; justify-content: center; }
 .chart .col.out-left  { flex-grow: 0.0001; opacity: 0; transform: translateX(-70px); pointer-events: none; }
 .chart .col.out-right { flex-grow: 0.0001; opacity: 0; transform: translateX(70px);  pointer-events: none; }
 .chart .col.zoom { flex-grow: 0; flex-basis: 124px; }
@@ -86,6 +86,11 @@ a { color: inherit; text-decoration: none; }
   justify-content: space-between; padding: 0 8px; font-size: 11px;
   color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.55); white-space: nowrap;
 }
+/* Both halves are spelled out, in stack order: tips (the orange band, on top)
+   then net wage (the grey band). One combined figure read as "that's the tips
+   number", because it sat in the middle of the orange. */
+.day .lt { font-weight: 500; }
+.day .lw { color: rgba(255,255,255,.72); margin-left: 4px; }
 .day.thin .dlab { font-size: 10px; padding: 0 5px; }
 @keyframes day-in {
   from { transform: scaleY(.04); opacity: 0; }
