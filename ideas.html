@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#121316">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <link rel="icon" type="image/png" href="icons/icon-192.png">
-  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="theme.css?v=20260817a">
   <title>Ideas — Log It</title>
   <style>
     /* Cards sat at --surface (#1e1f24) on --bg (#121316) — barely two shades
@@ -17,6 +17,19 @@
       border-radius: 14px; padding: 15px 16px; margin-bottom: 11px;
     }
     .idea.busy { opacity: 0.5; }
+    /* touch-action:none is load-bearing: without it the browser claims the
+       gesture for scrolling and pointermove never fires on a phone. */
+    .grip {
+      flex: none; width: 32px; height: 32px; margin: -5px 0 0 -8px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--dim); font-size: 15px; letter-spacing: 1px;
+      cursor: grab; touch-action: none; border-radius: 8px;
+    }
+    .grip:active { cursor: grabbing; background: rgba(255,255,255,.07); }
+    .idea.dragging {
+      border-color: var(--action); z-index: 5;
+      box-shadow: 0 12px 30px rgba(0,0,0,.55);
+    }
     .idea .hd { display: flex; gap: 10px; align-items: flex-start; }
     .idea .t { flex: 1; font-size: 16px; line-height: 1.35; }
     .idea.done .t, .idea.arch .t { color: var(--dim); }
@@ -82,6 +95,7 @@
     <span>Sort</span>
     <button data-sort="newest" aria-pressed="true">Newest</button>
     <button data-sort="excitement" aria-pressed="false">Most excited</button>
+    <button data-sort="manual" aria-pressed="false">Manual</button>
   </div>
   <div id="list"></div>
   <div id="orphans"></div>
@@ -93,16 +107,19 @@
   <div class="skeleton" style="width:60%;margin:0 auto"></div>
 </div>
 
-<script src="ideaModel.js"></script>
-<script src="dataClient.js"></script>
-<script src="ui.js"></script>
+<script src="ideaModel.js?v=20260817a"></script>
+<script src="dataClient.js?v=20260817a"></script>
+<script src="ui.js?v=20260817a"></script>
 <script>
 const MOCK = new URLSearchParams(location.search).get('mock') === '1';
 
 let IDEAS = [];
 let ORPHANS = [];
 let filter = 'Active';
-let sortMode = 'newest';
+// Order lives on this device only, by choice: no Order column in the sheet
+// and no server round-trip on a drag.
+let manualOrder = readOrder();
+let sortMode = manualOrder.length ? 'manual' : 'newest';
 let busy = null;
 // Ideas whose status you just changed stay on screen even though they no
 // longer match the filter. Without this, one tap on Active sends the card
@@ -127,7 +144,7 @@ function render() {
   renderChips();
   const base = filterIdeas(IDEAS, filter);
   const held = IDEAS.filter((i) => stuck.has(keyOf(i)) && base.indexOf(i) === -1);
-  const shown = sortIdeas(base.concat(held), sortMode);
+  const shown = sortIdeas(base.concat(held), sortMode, manualOrder);
 
   $('list').innerHTML = shown.length
     ? shown.map((i) => ideaHtml(i)).join('')
@@ -153,9 +170,94 @@ function render() {
   document.querySelectorAll('.px').forEach((el) => {
     el.onclick = (e) => { e.stopPropagation(); editPrice(el.dataset.key, el.dataset.item); };
   });
+  document.querySelectorAll('.grip').forEach((el) => {
+    el.onpointerdown = (e) => startDrag(e, el.closest('.idea'));
+  });
 }
 
-function keyOf(i) { return i.ts ? i.ts.toISOString() : 'title:' + i.title; }
+// ---------------------------------------------------------------
+// DRAG TO REORDER
+// ---------------------------------------------------------------
+// Pointer events, not HTML5 drag-and-drop: dragstart/dragover never fire on
+// touch, which is the only place this is used.
+let drag = null;
+
+function startDrag(e, card) {
+  if (!card) return;
+  e.preventDefault();
+  drag = { card, baseY: e.clientY };
+  card.classList.add('dragging');
+  document.addEventListener('pointermove', onDragMove);
+  document.addEventListener('pointerup', endDrag, { once: true });
+  document.addEventListener('pointercancel', endDrag, { once: true });
+}
+
+function onDragMove(e) {
+  if (!drag) return;
+  drag.card.style.transform = 'translateY(' + (e.clientY - drag.baseY) + 'px)';
+
+  const r = drag.card.getBoundingClientRect();
+  const mid = r.top + r.height / 2;
+  const list = $('list');
+
+  for (const c of Array.from(list.children)) {
+    if (c === drag.card) continue;
+    const cr = c.getBoundingClientRect();
+    const cmid = cr.top + cr.height / 2;
+    const rel = c.compareDocumentPosition(drag.card);
+    // Compare against each neighbour's MIDPOINT, and only move in the
+    // direction the card actually is. Testing "is mid inside this card's box"
+    // matched the neighbour directly below while the card was still above it,
+    // so it inserted the card before a sibling it already preceded: a no-op
+    // that still re-baselined, snapping the card back every frame.
+    if (mid > cmid && (rel & Node.DOCUMENT_POSITION_PRECEDING)) {
+      list.insertBefore(drag.card, c.nextSibling);
+    } else if (mid < cmid && (rel & Node.DOCUMENT_POSITION_FOLLOWING)) {
+      list.insertBefore(drag.card, c);
+    } else {
+      continue;
+    }
+    // Re-baseline against the new resting place, or the card jumps by exactly
+    // the distance it just travelled the moment the DOM moves under it.
+    drag.baseY = e.clientY;
+    drag.card.style.transform = '';
+    return;
+  }
+}
+
+function endDrag() {
+  if (!drag) return;
+  drag.card.classList.remove('dragging');
+  drag.card.style.transform = '';
+  document.removeEventListener('pointermove', onDragMove);
+  drag = null;
+
+  // Only the filtered ideas are on screen, so keep the stored position of
+  // everything that is not — otherwise switching to Done and back would forget
+  // the order of every Active idea.
+  const visible = Array.from($('list').children).map((c) => c.dataset.key);
+  const seen = new Set(visible);
+  manualOrder = visible.concat(manualOrder.filter((k) => !seen.has(k)));
+  saveOrder(manualOrder);
+
+  if (sortMode !== 'manual') { sortMode = 'manual'; syncSort(); }
+  render();
+}
+
+function syncSort() {
+  document.querySelectorAll('.sortbar button').forEach((x) =>
+    x.setAttribute('aria-pressed', String(x.dataset.sort === sortMode)));
+}
+
+const keyOf = ideaKey;   // defined in ideaModel.js, where it is tested
+
+function readOrder() {
+  try { return JSON.parse(localStorage.getItem('idea_order') || '[]') || []; }
+  catch { return []; }
+}
+function saveOrder(keys) {
+  try { localStorage.setItem('idea_order', JSON.stringify(keys)); } catch {}
+}
 
 function ideaHtml(i) {
   const key = keyOf(i);
@@ -165,8 +267,11 @@ function ideaHtml(i) {
   const spend = ideaSpend(i);
   const cls = i.status === 'Done' ? ' done' : i.status === 'Archived' ? ' arch' : '';
 
-  let h = '<div class="idea' + cls + (busy === key ? ' busy' : '') + '">'
-    + '<div class="hd"><div class="t">' + escapeHtml(i.title) + '</div>'
+  let h = '<div class="idea' + cls + (busy === key ? ' busy' : '') + '"'
+    + ' data-key="' + escapeHtml(key) + '">'
+    + '<div class="hd">'
+    + '<div class="grip" role="button" aria-label="Drag to reorder">&#10247;</div>'
+    + '<div class="t">' + escapeHtml(i.title) + '</div>'
     + '<button class="status ' + i.status + '" data-key="' + escapeHtml(key) + '">'
     + i.status + '</button></div>'
     + '<div class="meta">' + escapeHtml(i.category || '—') + ' · '
@@ -307,13 +412,9 @@ function load() {
 }
 
 document.querySelectorAll('.sortbar button').forEach((b) => {
-  b.onclick = () => {
-    sortMode = b.dataset.sort;
-    document.querySelectorAll('.sortbar button').forEach((x) =>
-      x.setAttribute('aria-pressed', String(x.dataset.sort === sortMode)));
-    render();
-  };
+  b.onclick = () => { sortMode = b.dataset.sort; syncSort(); render(); };
 });
+syncSort();
 
 $('key-save').onclick = () => {
   const v = $('key').value.trim();

@@ -1713,6 +1713,21 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     });
   }
   for (const page of ['shifts.html', 'ideas.html']) {
+    test(page + ': every local script and stylesheet is version-stamped', async () => {
+      // A cached ideaModel.js served alongside an updated ideas.html killed the
+      // page outright: the inline script died on `const keyOf = ideaKey`, and
+      // the user got a blank screen with nothing in the console. Static asset
+      // URLs must carry a version so a changed page cannot pair with stale JS.
+      const src = await fetchText(page);
+      const refs = [...src.matchAll(/(?:src|href)="([^"]+\.(?:js|css)[^"]*)"/g)].map((m) => m[1]);
+      assert(refs.length >= 3, 'expected local assets in ' + page);
+      const versions = new Set();
+      for (const r of refs) {
+        assert(/\?v=/.test(r), r + ' is not version-stamped in ' + page);
+        versions.add(r.split('?v=')[1]);
+      }
+      assertEq(versions.size, 1, 'all assets on a page must share one version');
+    });
     test(page + ': uses in-app dialogs, never the browser\'s', async () => {
       const src = await fetchText(page);
       // window.prompt/confirm/alert render in browser chrome — grey, wrong
@@ -1821,6 +1836,58 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(c.Active, 2);
     assertEq(c.Done, 0);
     assertEq(c.Archived, 0);
+  });
+
+  test('ideaKey: timestamp when there is one, title when there is not', () => {
+    const ts = new Date(2026, 7, 14, 8, 0, 27);
+    assertEq(ideaKey(IDEA(ts, 'x')), ts.toISOString());
+    assertEq(ideaKey(IDEA(null, 'Some idea')), 'title:Some idea');
+  });
+
+  test('applyManualOrder: honours the stored order', () => {
+    const a = IDEA(new Date(2026, 5, 1), 'a');
+    const b = IDEA(new Date(2026, 5, 2), 'b');
+    const c = IDEA(new Date(2026, 5, 3), 'c');
+    const out = applyManualOrder([a, b, c], [ideaKey(c), ideaKey(a), ideaKey(b)]);
+    assertEq(out.map((i) => i.title).join(''), 'cab');
+  });
+  test('applyManualOrder: an idea logged since the last drag goes last', () => {
+    // Not to the top: a new row must not barge into a list you arranged by hand.
+    const a = IDEA(new Date(2026, 5, 1), 'a');
+    const fresh = IDEA(new Date(2026, 7, 1), 'fresh');
+    const out = applyManualOrder([fresh, a], [ideaKey(a)]);
+    assertEq(out.map((i) => i.title).join(','), 'a,fresh');
+  });
+  test('applyManualOrder: several unplaced ideas fall back to newest first', () => {
+    const old = IDEA(new Date(2026, 5, 1), 'old');
+    const mid = IDEA(new Date(2026, 6, 1), 'mid');
+    const nu  = IDEA(new Date(2026, 7, 1), 'new');
+    assertEq(applyManualOrder([old, mid, nu], []).map((i) => i.title).join(','),
+      'new,mid,old');
+  });
+  test('applyManualOrder: a stale key for a deleted idea is ignored', () => {
+    const a = IDEA(new Date(2026, 5, 1), 'a');
+    const out = applyManualOrder([a], ['title:gone', ideaKey(a)]);
+    assertEq(out.length, 1);
+    assertEq(out[0].title, 'a');
+  });
+  test('applyManualOrder: does not mutate the input', () => {
+    const a = IDEA(new Date(2026, 5, 1), 'a');
+    const b = IDEA(new Date(2026, 5, 2), 'b');
+    const list = [a, b];
+    applyManualOrder(list, [ideaKey(b), ideaKey(a)]);
+    assertEq(list[0].title, 'a');
+  });
+  test('sortIdeas: manual mode uses the stored keys', () => {
+    const a = IDEA(new Date(2026, 5, 1), 'a');
+    const b = IDEA(new Date(2026, 5, 2), 'b');
+    assertEq(sortIdeas([a, b], 'manual', [ideaKey(a), ideaKey(b)])[0].title, 'a');
+    assertEq(sortIdeas([a, b], 'manual', [ideaKey(b), ideaKey(a)])[0].title, 'b');
+  });
+  test('sortIdeas: manual with no stored order is just newest first', () => {
+    const a = IDEA(new Date(2026, 5, 1), 'old');
+    const b = IDEA(new Date(2026, 7, 1), 'new');
+    assertEq(sortIdeas([a, b], 'manual', null)[0].title, 'new');
   });
 
   test('sortIdeas: newest first by default', () => {

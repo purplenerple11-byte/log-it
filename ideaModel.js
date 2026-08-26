@@ -77,12 +77,33 @@ function statusCounts(ideas) {
   return out;
 }
 
+// The identity used for ordering and for addressing a row on the server.
+// Timestamp when there is one; the title otherwise, because one live material
+// row was hand-added with no timestamp and its idea may follow.
+function ideaKey(i) {
+  return i && i.ts ? i.ts.toISOString() : 'title:' + ((i && i.title) || '');
+}
+
+// Reorder to a stored list of keys. Anything not in the list — a new idea
+// logged since you last dragged — sorts to the end, newest first, rather than
+// silently jumping to the top of a list you arranged by hand.
+function applyManualOrder(ideas, keys) {
+  const pos = new Map((Array.isArray(keys) ? keys : []).map((k, i) => [k, i]));
+  return (Array.isArray(ideas) ? ideas : []).slice().sort((a, b) => {
+    const pa = pos.has(ideaKey(a)) ? pos.get(ideaKey(a)) : Infinity;
+    const pb = pos.has(ideaKey(b)) ? pos.get(ideaKey(b)) : Infinity;
+    if (pa !== pb) return pa - pb;
+    return tsOf(b) - tsOf(a);
+  });
+}
+
 function tsOf(i) {
   return i && i.ts instanceof Date ? i.ts.getTime() : 0;
 }
 
-function sortIdeas(ideas, mode) {
+function sortIdeas(ideas, mode, manualKeys) {
   const list = (Array.isArray(ideas) ? ideas : []).slice();
+  if (mode === 'manual') return applyManualOrder(list, manualKeys);
   if (mode === 'excitement') {
     // Excitement first, newest breaking the tie — an old 5 shouldn't outrank
     // one written yesterday.
