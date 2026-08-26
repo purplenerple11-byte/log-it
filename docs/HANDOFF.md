@@ -1,4 +1,4 @@
-# Log It — Session Handoff (2026-08-16)
+# Log It — Session Handoff (2026-08-17)
 
 Read this first. It's the state of the project, how we work, and what's next.
 
@@ -16,20 +16,24 @@ capital M).
 PWA (index.html, GitHub Pages)
   → fetch POST text/plain (avoids CORS preflight)
     → Google Apps Script Web App  ("Execute as: Me", access: Anyone)
-       source of truth in repo: server/routerWebApp.gs (v4.7) +
-         server/tipRouting.js + server/trackPay.js (pasted alongside it as
-         additional files in the SAME Apps Script project — same project,
-         NOT separate ones; Apps Script shares one global scope per project)
-       ⚠ Apps Script does NOT auto-sync: after editing those files, the user
-         must paste them in and publish via Deploy → Manage deployments →
-         pencil → Version: New version. NOT "New deployment" — that mints a
-         fresh /exec URL and the current one is baked into CFG_DEFAULTS, so
-         the app would silently keep running the old code.
+       source of truth in repo: server/routerWebApp.gs (v4.8) +
+         tipRouting.js + trackPay.js + readApi.js + sheetWrite.js, all in the
+         SAME Apps Script project ("Log It - Router"), whose file names are
+         Code / tipRouter / trackPay / readApi / sheetWrite — NOT the repo's
+         names. Apps Script shares one global scope per project.
+       ⚠ Claude can push with `clasp`, but push ≠ publish: the /exec URL
+         serves whatever version the deployment names. Currently @19.
+         Publishing = bump that deployment, NOT "New deployment", which mints
+         a fresh /exec URL while CFG_DEFAULTS still points at the old one.
       → Gemini API (systemInstruction SYSTEM_PROMPT, JSON response mode)
          model chain: gemini-3.1-flash-lite → gemini-3.5-flash (1 attempt each)
       → SpreadsheetApp writes to per-category sheets
     ← {success, category, sub_route, message}
   ← enriched confirmation shown in confirm card
+
+shifts.html / ideas.html (GitHub Pages)
+  → same POST text/plain, op: read | patch | delete, gated by READ_TOKEN
+    → reads answer BEFORE the script lock; patch/delete take it
 ```
 
 - **Client** (`index.html`, ~1240 lines, no build/npm, plus `daily.js` for the
@@ -92,7 +96,7 @@ PWA (index.html, GitHub Pages)
 ## Testing (browser-only, no CLI runner)
 
 - In-page harness: serve repo (`python3 -m http.server 8777`) and open
-  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 214 passed, 0
+  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 240 passed, 0
   failed.** Any change must keep it green; new features add tests there.
   Tests live in `tests.js`; `index.html` injects it only when `?test=1` is
   set, so production never fetches it. The harness reads production globals
@@ -328,7 +332,8 @@ PWA (index.html, GitHub Pages)
    same `/exec` URL. Front end merged to `Main` and live on Pages.
 5. Open the Shifts page on the phone and paste the token when asked.
 
-**All of the above is done.** The only remaining user step is #5.
+**All of the above is done.** The only remaining user step is #5 — entering
+the read key once on the phone, on each of the two pages.
 
 19. **Read/interact front end** (router v4.8, `feat/read-front-end`). Two read
     surfaces over the same sheets the logger writes to, plus a narrow
@@ -362,6 +367,17 @@ PWA (index.html, GitHub Pages)
       untimestamped immersion-blender material surfacing rather than being
       dropped, all five patch guards refusing, and a material round-tripped
       true→false leaving the sheet as it started.
+    - **Shipped after the first deploy** (all live): value labels on the week
+      bars; numeric axis labels and leading-empty-week trimming; tap a week to
+      drill into per-day blocks, each keeping the tips-on-wage split and
+      spelling out both halves ("Sat 619 + 140"); bigger, higher-contrast idea
+      cards with ~44px material rows; drag-to-reorder ideas, stored on the
+      device only (localStorage `idea_order`, no Order column in the sheet).
+    - **Asset versioning.** Every static script/stylesheet on the read pages
+      carries `?v=<token>`; a test asserts it and that one page never mixes
+      tokens. **Bump the token whenever a `.js`/`.css` on those pages changes.**
+      `index.html` still loads `daily.js` unversioned — same risk, left alone
+      to avoid touching the logging path.
     - **Claude can now push to Apps Script** via `clasp` (3.3.0, authenticated).
       Push ≠ publish: a push moves HEAD only, the `/exec` URL keeps serving the
       version the deployment names. Script Properties remain a hand paste —
@@ -449,6 +465,21 @@ penny on both**; tests.js locks it in.
 
 ## Gotchas
 
+- **A green suite is not a working page.** Four real defects this session were
+  invisible to 240 passing tests and were each caught by looking: a chart
+  stacking pre-tax on post-tax under one legend; an empty sheet id on any
+  device that never opened the ⚙ panel (the mock never sends one, so that path
+  does not run under `?mock=1`); a drag that re-baselined on a no-op insert and
+  snapped back every frame; and a cached `.js` blanking a page outright.
+  Screenshot the thing, and hit the live endpoint, before believing it works.
+- **Stale cached assets are the recurring failure mode here.** It has now bitten
+  three times in three different places: `fetchText` (fixed with a per-run
+  buster), the `?test=1` `<script>` injector (fixed), and the read pages' own
+  `<script src>` tags (fixed with `?v=`). Whenever something behaves as though
+  your edit did not happen, check what the browser actually fetched before
+  debugging the logic.
+- **`clasp` can push and version the live Apps Script**, so "paste this in" is
+  no longer the only route — but Script Properties still have no CLI and no API.
 - `.superpowers/sdd/progress.md` = subagent-driven-dev ledger from Feature #2.
 - Browser pane blocks `file://` — always use the local HTTP server.
 - `textutil -convert txt` extracts the user's RTF code files.
