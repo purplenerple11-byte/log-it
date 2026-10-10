@@ -28,7 +28,7 @@
 // global scope. Every top-level name here is prefixed dorset/DORSET/vt/VT so it
 // cannot collide with trackPay.gs, which it calls into (round2, federalWeekly,
 // payWeekStart, FICA_RATE, MEDICARE_RATE) along with readApi.gs
-// (columnForHeader, cellNumber, cellText, payWeekKey).
+// (columnForHeader, cellNumber, cellText, cellClock, payWeekKey).
 // ================================================================
 
 var DORSET_VENUE     = 'Dorset Inn';
@@ -243,8 +243,8 @@ function readDorsetShifts(rows) {
       hours: hrs,
       tips: c.tipsShare,
       notes: cNotes === -1 ? '' : cellText(r[cNotes]),
-      clockIn: cIn === -1 ? null : (cellText(r[cIn]) || null),
-      clockOut: cOut === -1 ? null : (cellText(r[cOut]) || null),
+      clockIn: cIn === -1 ? null : (cellClock(r[cIn]) || null),
+      clockOut: cOut === -1 ? null : (cellClock(r[cOut]) || null),
       pay: {
         gross: c.grossWage,
         net: c.netWage,

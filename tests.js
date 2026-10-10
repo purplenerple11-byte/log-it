@@ -332,7 +332,8 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     // and routeTip() owns the decision — see server/tipRouting.js.
     assert(src.indexOf('"sub_route":"Susans"') === -1, 'Susans must not be a prompt-chosen sub_route');
     assert(src.indexOf('"sub_route":"Track"') === -1, 'Track must not be a prompt-chosen sub_route');
-    assert(src.indexOf('sub_route = routeTip(data)') !== -1, 'doPost must route tips in code');
+    // Routed in code, then passed through the season gate — still code, never the prompt.
+    assert(/sub_route = (seasonGate\()?routeTip\(data\)/.test(src), 'doPost must route tips in code');
     assert(src.indexOf('shiftHours(data.clock_in') !== -1, 'handleTip must derive hours from the clock times');
   });
   test('router: no blocking Utilities.sleep', async () => {
@@ -2071,6 +2072,101 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     const read = src.slice(src.indexOf('function handleRead'), src.indexOf('function handlePatch'));
     assert(read.indexOf('getSheetByName(DORSET_VENUE)') !== -1,
       'getTab throws on a missing tab; the read must tolerate one');
+  });
+
+  // ---- EVENING CLOCK-OUT (server/tipRouting.js) ----
+  // The prompt says bare 7-11 mean AM, which suited Track mornings. A Dorset
+  // night "4 - 10:24" can therefore come back as 16:00 → 10:24, and the
+  // midnight wrap makes that an 18.4-hour shift.
+  test('fixClockOut: a bare evening end after a PM start is PM', () => {
+    assertEq(fixClockOut('16:00', '10:24'), '22:24');
+    assertEq(shiftHours('16:00', fixClockOut('16:00', '10:24')), 6.4);
+  });
+  test('fixClockOut: a real overnight shift still wraps past midnight', () => {
+    // 1am read as 1pm would be BEFORE a 4pm start, so it really is 1am.
+    assertEq(fixClockOut('16:00', '01:00'), '01:00');
+    assertEq(fixClockOut('22:00', '02:00'), '02:00');
+  });
+  test('fixClockOut: protects Track too — "6:50 out" read as AM', () => {
+    assertEq(fixClockOut('09:18', '06:50'), '18:50');
+  });
+  test('fixClockOut: leaves correct and unparseable times alone', () => {
+    assertEq(fixClockOut('09:18', '18:50'), '18:50');
+    assertEq(fixClockOut('16:00', '22:24'), '22:24');
+    assertEq(fixClockOut(null, '10:24'), '10:24');
+    assertEq(fixClockOut('16:00', null), null);
+  });
+  test('router: the clock-out is corrected before anything prices the shift', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    const fix = src.indexOf('data.clock_out = fixClockOut(data.clock_in, data.clock_out)');
+    assert(fix !== -1, 'doPost must correct the clock-out');
+    assert(fix < src.indexOf('handleTip(ss, sub_route, data, shift)'), 'before handleTip');
+  });
+
+  // Sheets turns a written "4:00pm" into a time value, and getValues hands it
+  // back as a Date on its 1899-12-30 epoch. Stringified, the shifts page
+  // printed "Sat Dec 30 1899 16:00:00 GMT-0500 (Eastern Standard Time)" as
+  // the clock-in. Found on the first real Dorset shift, not in tests.
+  test('cellClock: a Sheets time value reads as a clock time', () => {
+    assertEq(cellClock(new Date(1899, 11, 30, 16, 0)), '4:00pm');
+    assertEq(cellClock(new Date(1899, 11, 30, 22, 24)), '10:24pm');
+    assertEq(cellClock(new Date(1899, 11, 30, 0, 5)), '12:05am');
+  });
+  test('cellClock: text already in the cell passes through', () => {
+    assertEq(cellClock('2:35 PM'), '2:35 PM');
+    assertEq(cellClock(''), '');
+    assertEq(cellClock(null), '');
+  });
+  test('readDorsetShifts: clock times survive Sheets converting them', () => {
+    const rows = DORSET_ROWS();
+    rows[1][1] = new Date(1899, 11, 30, 16, 0);
+    rows[1][2] = new Date(1899, 11, 30, 22, 24);
+    const s = readDorsetShifts(rows);
+    assertEq(s[0].clockIn, '4:00pm');
+    assertEq(s[0].clockOut, '10:24pm');
+  });
+
+  // ---- TRACK SEASON GATE (server/tipRouting.js) ----
+  // Track is closed until next season. routeTip still answers the question
+  // "which venue does this look like"; seasonGate decides what is allowed.
+  test('seasonGate: while closed, an implied Track shift becomes Dorset Inn', () => {
+    // A morning clock-in or hours-with-tips pointed at Track by shape alone.
+    assertEq(seasonGate('Track', { clock_in: '09:30' }, false), 'Dorset Inn');
+    assertEq(seasonGate('Track', { hours: 9, tips: 300 }, false), 'Dorset Inn');
+  });
+  test('seasonGate: while closed, saying "track" is refused, not rerouted', () => {
+    // Quietly filing an explicit Track entry under Dorset would be a wrong row
+    // in the wrong tab. Nothing is written; the message says why.
+    for (const v of ['track', 'the track', 'valet']) {
+      assert(/Track is closed/.test(refusal(() => seasonGate('Track', { venue: v }, false))),
+        'venue ' + JSON.stringify(v));
+    }
+  });
+  test('seasonGate: in season, Track passes straight through', () => {
+    assertEq(seasonGate('Track', { venue: 'track' }, true), 'Track');
+    assertEq(seasonGate('Track', { clock_in: '09:30' }, true), 'Track');
+  });
+  test('seasonGate: other venues are never touched', () => {
+    assertEq(seasonGate('Dorset Inn', { clock_in: '16:00' }, false), 'Dorset Inn');
+    assertEq(seasonGate('Susans', { venue: 'susans' }, false), 'Susans');
+  });
+  test('seasonGate: Track is closed right now', () => {
+    assertEq(TRACK_SEASON_OPEN, false, 'flip to true when the meet opens');
+  });
+  test('router: the season gate runs between routing and writing', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    const gate = src.indexOf('sub_route = seasonGate(routeTip(data), data)');
+    assert(gate !== -1, 'doPost must gate the routed venue');
+    assert(gate < src.indexOf('handleTip(ss, sub_route, data, shift)'), 'before anything is written');
+  });
+  test('router: handleTip refuses Track on its own when closed', async () => {
+    // Belt and braces: the user asked for this to be impossible, so the Track
+    // writer checks too rather than trusting every caller to have gated.
+    const src = await fetchText('server/routerWebApp.gs');
+    const body = src.slice(src.indexOf('function handleTip'));
+    const guard = body.indexOf('!TRACK_SEASON_OPEN');
+    assert(guard !== -1, 'handleTip must check the season itself');
+    assert(guard < body.indexOf("getTab(ss, 'Track')"), 'before the Track tab is touched');
   });
 
   runTests();

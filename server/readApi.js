@@ -67,6 +67,21 @@ function cellText(v) {
   return String(v == null ? '' : v).trim();
 }
 
+// A clock-time cell. Sheets parses a written "4:00pm" into a time value and
+// getValues returns it as a Date on the 1899-12-30 epoch, which stringifies
+// as "Sat Dec 30 1899 16:00:00 GMT-0500". Read the hours and minutes back out
+// instead. Text that Sheets left alone passes through untouched.
+function cellClock(v) {
+  if (v instanceof Date) {
+    var h = v.getHours(), m = v.getMinutes();
+    var suffix = h < 12 ? 'am' : 'pm';
+    var h12 = h % 12;
+    if (h12 === 0) h12 = 12;
+    return h12 + ':' + (m < 10 ? '0' + m : m) + suffix;
+  }
+  return cellText(v);
+}
+
 // Checkbox cells come back as real booleans; a hand-typed cell might say
 // anything. Blank is false.
 function cellBool(v) {
@@ -186,8 +201,8 @@ function readSusansShifts(rows) {
       hours: cellNumber(r[cHours]) || 0,
       tips: 0,
       notes: cNotes === -1 ? '' : cellText(r[cNotes]),
-      clockIn: cIn === -1 ? null : cellText(r[cIn]),
-      clockOut: cOut === -1 ? null : cellText(r[cOut]),
+      clockIn: cIn === -1 ? null : cellClock(r[cIn]),
+      clockOut: cOut === -1 ? null : cellClock(r[cOut]),
       // GROSS, not take-home. Kept in its own field precisely so nothing can
       // add it to a Track net by accident.
       grossPay: cPay === -1 ? 0 : (cellNumber(r[cPay]) || 0),

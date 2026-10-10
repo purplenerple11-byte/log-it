@@ -41,6 +41,24 @@ function to12h(s) {
   return h12 + ':' + (min < 10 ? '0' + min : min) + suffix;
 }
 
+// A clock-out that came back as AM when it was obviously PM.
+//
+// The prompt maps bare 7-11 to AM, which suited Track's 9am starts. A Dorset
+// night said as "4 - 10:24" can therefore arrive as 16:00 -> 10:24, and the
+// midnight wrap in shiftHours turns a 6.4h shift into an 18.4h one. The rule:
+// if the clock-out is before the clock-in, and reading it as PM lands it AFTER
+// the clock-in the same day, it was PM. A genuine overnight shift is untouched
+// because its PM reading would fall before the start (4pm -> 1am: 1pm < 4pm).
+function fixClockOut(clockIn, clockOut) {
+  var start = parseHHMM(clockIn);
+  var end = parseHHMM(clockOut);
+  if (start === null || end === null || end >= start || end >= 12 * 60) return clockOut;
+  var pm = end + 12 * 60;
+  if (pm <= start) return clockOut;
+  var h = Math.floor(pm / 60), m = pm % 60;
+  return (h < 10 ? '0' + h : h) + ':' + (m < 10 ? '0' + m : m);
+}
+
 // Shift length in hours. Computed from the clock times when both are present —
 // the model's own arithmetic is not trusted. Wraps past midnight so an
 // overnight shift doesn't come out negative. Falls back to the reported hours.
@@ -141,5 +159,27 @@ function routeTip(data) {
   }
   if (start !== null) return start < 12 * 60 ? 'Track' : 'Dorset Inn';
   if (tipped) return 'Track';
+  return 'Dorset Inn';
+}
+
+// Track runs on the Saratoga meet; outside it there is no Track work to log.
+// Flip to true when the meet opens (late June/July) and back after Labor Day.
+var TRACK_SEASON_OPEN = false;
+
+// Apply the season to a routed venue. routeTip answers "what does this entry
+// look like"; this answers "is that allowed right now".
+//
+// While Track is closed, an entry routed there by SHAPE alone (a morning
+// clock-in, hours with tips) is really a Dorset shift and goes there. One that
+// NAMES the track is refused instead: filing it under Dorset would be a wrong
+// row in the wrong tab, which is worse than not logging it.
+function seasonGate(venue, data, trackOpen) {
+  var open = trackOpen === undefined ? TRACK_SEASON_OPEN : trackOpen;
+  if (venue !== 'Track' || open) return venue;
+  var named = String((data && data.venue) == null ? '' : data.venue).toLowerCase();
+  if (named.indexOf('track') !== -1 || named.indexOf('valet') !== -1) {
+    throw new Error('Track is closed until next season — nothing was logged. '
+                  + 'Say "dorset" if this was a Dorset shift.');
+  }
   return 'Dorset Inn';
 }

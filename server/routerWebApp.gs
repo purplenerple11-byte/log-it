@@ -221,7 +221,10 @@ function doPost(e) {
       // The tab is decided here, not by Gemini — see tipRouting.gs. Overwrite
       // sub_route so the client's confirmation card shows where it actually went.
       case 'tip':
-        sub_route = routeTip(data);
+        // Before anything reads the times: an evening clock-out the model
+        // returned as AM would otherwise price as an 18-hour shift.
+        data.clock_out = fixClockOut(data.clock_in, data.clock_out);
+        sub_route = seasonGate(routeTip(data), data);
         // Which DAY the shift happened decides its pay week, so resolve it
         // before handleTip sums the week — see resolveShiftDate in tipRouting.gs.
         var shift = resolveShiftDate(data.shift_date, now());
@@ -587,6 +590,9 @@ function handleTip(ss, sub_route, data, shift) {
   if (sub_route === DORSET_VENUE) return handleDorset(ss, data, shift);
 
   if (sub_route === 'Track') {
+    // Closed for the season. seasonGate already stops this in doPost; checked
+    // again here so no other caller can write a Track row by accident.
+    if (!TRACK_SEASON_OPEN) throw new Error('Track is closed until next season — nothing was logged.');
     // Deduct 0.5 hours exclusively for Track shifts (the break is unpaid)
     hrs = Math.max(0, hrs - BREAK_DEDUCTION_HRS);
 
