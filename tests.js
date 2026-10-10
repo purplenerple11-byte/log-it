@@ -311,13 +311,15 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     const vals = [...row.querySelectorAll('.today-box')].map((b) => b.style.getPropertyValue('--i').trim());
     assertEq(vals.join(','), '0,1,2,3,4', 'boxes should be indexed in order');
   });
-  test('router: v4.2 source parses as valid JS', async () => {
+  test('router: source parses as valid JS', async () => {
     const src = await fetchText('server/routerWebApp.gs');
     new Function(src); // parse check only — Google globals are only referenced at runtime
   });
-  test('router: header bumped to v4.2', async () => {
+  test('router: header names the version it is', async () => {
+    // Used to assert the string 'v4.2' appeared anywhere — which stayed true
+    // for seven releases only because an old changelog quoted it.
     const src = await fetchText('server/routerWebApp.gs');
-    assert(src.indexOf('v4.2') !== -1, 'version bumped');
+    assert(/Router Web App\s+\(v4\.\d+/.test(src.slice(0, 300)), 'version in the header');
   });
   test('router: NaN "+ +" prompt bug fixed', async () => {
     const src = await fetchText('server/routerWebApp.gs');
@@ -2167,6 +2169,46 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     const guard = body.indexOf('!TRACK_SEASON_OPEN');
     assert(guard !== -1, 'handleTip must check the season itself');
     assert(guard < body.indexOf("getTab(ss, 'Track')"), 'before the Track tab is touched');
+  });
+
+  // ---- CLEANUP (2026-10-09) ----
+  test('contiguousRow: adjacent columns become one write, in column order', () => {
+    // Recompute wrote one cell per call: a 5-shift Dorset week was 25 Sheets
+    // round trips. Adjacent columns collapse to one setValues per row.
+    const w = contiguousRow([7, 6, 8], ['b', 'a', 'c']);
+    assertEq(w.start, 6);
+    assertEq(w.line.join(','), 'a,b,c');
+  });
+  test('contiguousRow: a gap means no single range — caller writes per cell', () => {
+    assertEq(contiguousRow([5, 7, 8], [1, 2, 3]), null);
+    assertEq(contiguousRow([], []), null);
+    assertEq(contiguousRow([4, 4], [1, 2]), null, 'a repeated column is not a range');
+  });
+  test('router: both week recomputes write through writeCells', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    for (const fn of ['function recomputeTrackWeek', 'function recomputeDorsetWeek']) {
+      const body = src.slice(src.indexOf(fn), src.indexOf('\n}\n', src.indexOf(fn)));
+      assert(body.indexOf('writeCells(') !== -1, fn + ' must batch its writes');
+      assert(body.indexOf('.setValue(') === -1, fn + ' must not write cell by cell');
+    }
+  });
+  test('router: header points at the real live file names', async () => {
+    // It used to say "tipRouting.gs"; the live file is tipRouter. Pasting under
+    // the repo name would put two copies of routeTip in one global scope.
+    const head = (await fetchText('server/routerWebApp.gs')).slice(0, 1500);
+    assert(/tipRouter\b/.test(head) && !/tipRouting\.gs/.test(head), 'live names in the header');
+  });
+  test('readTodayLogs: now = 0 is honoured, not replaced with the clock', () => {
+    // deps.now || Date.now() treated a real epoch-0 "now" as missing.
+    const store = JSON.stringify([{ ts: 1000, day: localDayStamp(1000), category: 'meal' }]);
+    const out = readTodayLogs({ get: () => store, now: 0 });
+    assertEq(out.length, 1, 'epoch-day entry kept when now is epoch day');
+  });
+  test('index.html: daily.js is version-stamped like the read pages', async () => {
+    // The same stale-cache trap that blanked the ideas page: a cached daily.js
+    // beside a newer index.html.
+    const src = await fetchText('index.html');
+    assert(/<script src="daily\.js\?v=[^"]+"><\/script>/.test(src), 'daily.js needs ?v=');
   });
 
   runTests();

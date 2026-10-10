@@ -645,7 +645,7 @@
   <div id="save-ok">✓ Saved</div>
 </div>
 
-<script src="daily.js"></script>
+<script src="daily.js?v=20261009a"></script>
 <script>
 // ================================================================
 // CATEGORY DISPLAY CONFIG (icon + accent colour per category)
@@ -718,24 +718,29 @@ function escapeHtml(s) {
 // ================================================================
 // TODAY VIEW — DATA LAYER (local mirror)
 // ================================================================
+// The stored list, or [] for anything missing, unparseable, or not an array.
+function loadTodayArray(get) {
+  try {
+    const raw = get(TODAY_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
 function readTodayLogs(deps = {}) {
   const get = deps.get || LS.get;
-  const now = deps.now || Date.now();
-  let arr = [];
-  try { const raw = get(TODAY_KEY); arr = raw ? JSON.parse(raw) : []; } catch { arr = []; }
-  if (!Array.isArray(arr)) arr = [];
+  const now = deps.now ?? Date.now();   // ?? not ||: a real 0 is a real time
+  const arr = loadTodayArray(get);
   const today = pruneToToday(arr, now).filter(e => e && typeof e.ts === 'number');
   today.sort((a, b) => b.ts - a.ts);
   return today;
 }
 
 function recordTodayLog(category, sub_route, message, text, deps = {}) {
-  const now = deps.now || Date.now();
+  const now = deps.now ?? Date.now();
   const get = deps.get || LS.get;
   const set = deps.set || LS.set;
-  let arr = [];
-  try { const raw = get(TODAY_KEY); arr = raw ? JSON.parse(raw) : []; } catch { arr = []; }
-  if (!Array.isArray(arr)) arr = [];
+  let arr = loadTodayArray(get);
   arr.push({ ts: now, day: localDayStamp(now), category, sub_route, message, text });
   arr = pruneToToday(arr, now);
   try { set(TODAY_KEY, JSON.stringify(arr)); } catch {}
@@ -1209,7 +1214,8 @@ initSpeech();
 loadConfig();
 renderTodayView();
 renderDailyLine();
-document.getElementById('today-row').addEventListener('keydown', (e) => {
+const todayRow = document.getElementById('today-row');
+if (todayRow) todayRow.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTodayExpanded(); }
 });
 

@@ -173,3 +173,21 @@ function verifyShiftRow(row, expect, cols) {
   }
   return true;
 }
+
+// One setValues instead of one setValue per cell, when the target columns are
+// adjacent. Sheets round trips dominate a week recompute: a 5-shift Dorset
+// week was 25 separate writes. Returns { start, line } with `line` ordered by
+// column, or null when the columns have a gap (or repeat) and the caller must
+// write cell by cell. `cols` are 0-based.
+function contiguousRow(cols, values) {
+  if (!cols || !cols.length) return null;
+  var min = Math.min.apply(null, cols), max = Math.max.apply(null, cols);
+  if (max - min + 1 !== cols.length) return null;
+  var line = new Array(cols.length), seen = {};
+  for (var i = 0; i < cols.length; i++) {
+    if (seen[cols[i]]) return null;
+    seen[cols[i]] = true;
+    line[cols[i] - min] = values[i];
+  }
+  return { start: min, line: line };
+}

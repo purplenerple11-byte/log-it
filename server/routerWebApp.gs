@@ -1,77 +1,26 @@
 // ================================================================
-// Log It — Router Web App  (v4.9 — Dorset Inn)
-// File:    routerWebApp.gs
-// Deploy:  Web App  |  Execute as: Me  |  Who has access: Anyone
+// Log It — Router Web App  (v4.9 — Dorset Inn; Track closed for the season)
+// Live project "Log It - Router". Deploy: Web App | Execute as: Me | Anyone.
 //
-// REQUIRES four more script files in this project:
-//          tipRouting.gs  (paste from server/tipRouting.js)
-//          trackPay.gs    (paste from server/trackPay.js)
-//          readApi.gs     (paste from server/readApi.js)
-//          sheetWrite.gs  (paste from server/sheetWrite.js)
-//          dorsetPay.gs   (paste from server/dorsetPay.js)
+// FILES — one Apps Script project, ONE shared global scope. Live names differ
+// from the repo's; deploy with tools/deploy-apps-script.sh, which maps them:
+//   Code        ← server/routerWebApp.gs   (this file: doPost, Gemini, handlers)
+//   tipRouter   ← server/tipRouting.js     (routeTip, seasonGate, shift times)
+//   trackPay    ← server/trackPay.js       (Track wage + NY withholding)
+//   dorsetPay   ← server/dorsetPay.js      (Dorset wage + VT withholding)
+//   readApi     ← server/readApi.js        (row → object readers)
+//   sheetWrite  ← server/sheetWrite.js     (patch/delete validation)
 //
-// SETUP: Apps Script → Project Settings → Script Properties
-//        Add:  GEMINI_API_KEY = your key from aistudio.google.com
-//        Add:  READ_TOKEN     = a long random string, also entered on the phone
+// SCRIPT PROPERTIES (by hand — no CLI or API can set these):
+//   GEMINI_API_KEY   from aistudio.google.com
+//   READ_TOKEN       long random string, also entered once per page on the phone
 //
-// v4.9 changes: a third tip venue, the Dorset Inn ($10/hr busser, tips paid
-// weekly through payroll, Vermont withholding). An afternoon clock-in now means
-// Dorset Inn rather than Susans. A tips-only entry is that week's tips; it
-// lands in the week just ended unless a day is named, and every Dorset shift
-// in the week is re-priced when it arrives, because tips taxed through payroll
-// change the withholding for the whole paycheck. The tab creates itself on
-// first use. Withholding is an ESTIMATE until it can be fitted to a stub.
+// PUBLISH = new VERSION of the existing deployment (the script does this).
+// Never "New deployment": it mints a new /exec URL, and the current one is
+// baked into CFG_DEFAULTS, so the app would silently keep hitting old code.
 //
-// v4.8 changes: doPost dispatches on an `op` field — absent/'log' is the
-// original path byte for byte, plus 'read', 'patch' and 'delete' for the
-// shifts and ideas pages. Reads answer BEFORE any lock is taken, because the
-// log path holds the script lock for its whole request and a read holding it
-// would block logging a shift. The READ_TOKEN gates read/patch/delete only:
-// a missing or wrong key must never stop a log being written. Deleting a
-// duplicate Track row also recomputes the rest of that pay week, since the
-// survivors' stored net assumed the deleted shift's hours were in the week.
-//
-// v4.7 changes: tip entries carry shift_date, so a shift logged days later is
-// stamped and priced against the day it HAPPENED, not the day it was typed.
-// Previously the pay week came from now(), so logging Sunday's shift on
-// Wednesday treated it as a fresh week and overstated the net by ~$23. Gemini
-// only fills shift_date when a day is actually named; resolveShiftDate rejects
-// anything unparseable, unreal, future, or older than 45 days and falls back to
-// today. Back-dated shifts are echoed on the confirmation card ("logged for
-// Sun Aug 2") so a misread day is visible instead of silent.
-//
-// v4.6 changes: request_id + script lock + CacheService dedupe in doPost, so a
-// client retry can never write a second row (see the comment there). Client
-// timeout raised 15s -> 30s. Appended Track rows get their number formats set
-// explicitly, fixing rows that rendered as 1900-era dates.
-//
-// v4.5 changes: Track rows now carry pay — columns F-I hold Gross Wage,
-// Est. Net Wage, Total Take-Home, and Eff. $/hr. The withholding model lives in
-// trackPay.gs and is CALIBRATED from two real stubs (weeks ending 7/5 and
-// 7/19/2026); it is an estimate for planning, not a tax document. Because
-// withholding is progressive and assessed weekly, a shift's net is its
-// incremental contribution to the Mon-Sun week, so handleTip sums the week's
-// existing Track hours BEFORE appending. Track tab needs headers in F-I.
-//
-// v4.4 changes: grocery category retired — the user moved groceries to a
-// dedicated app. Dropped the category, its schema, handleGrocery/
-// insertGroceryItem, and the grocery SHEET_IDS slot. No routing guardrail was
-// added, so a grocery-ish entry ("out of milk") now gets classified into
-// whatever remaining category the model finds closest, by deliberate choice.
-//
-// v4.3 changes: tip tab routing moved out of the prompt and into tipRouting.gs.
-// Gemini now returns one tip shape carrying every field; routeTip() picks the
-// tab and shiftHours() derives the hours. The old two-schema prompt let the
-// entry's phrasing pick the tab — an in/out pair fit the Susans schema and
-// routed there even when every written rule said Track, silently dropping the
-// tip amount (Susans has no tips field) and writing a bogus hours × $20 row.
-//
-// v4.2 changes: removed per-model retry loop/sleep so server worst case
-// stays under the client's 15s timeout; fixed "+ +" NaN bug in SYSTEM_PROMPT.
-//
-// After any change: Deploy → Manage deployments → pencil → Version: New version.
-// NOT "New deployment" — that mints a fresh /exec URL, and the old one is baked
-// into CFG_DEFAULTS in index.html, so the app would keep hitting the old code.
+// Why things are the way they are: CLAUDE.md (invariants), docs/HANDOFF.md
+// (history), git log. Release notes no longer live in this header.
 // ================================================================
 
 // 2-Tier Locked Chain: Pinned primary prevents math/routing regression;
@@ -474,6 +423,18 @@ function handleDeleteShift(body) {
   return { success: true, deleted: ts.toISOString(), recomputed: recomputed };
 }
 
+// Write several cells of one row — a single setValues when the columns are
+// adjacent (contiguousRow, sheetWrite.gs), cell by cell when they are not.
+// `cols` are 0-based header indexes.
+function writeCells(tab, row, cols, values) {
+  var w = contiguousRow(cols, values);
+  if (w) {
+    tab.getRange(row, w.start + 1, 1, w.line.length).setValues([w.line]);
+    return;
+  }
+  for (var i = 0; i < cols.length; i++) tab.getRange(row, cols[i] + 1).setValue(values[i]);
+}
+
 // Rewrite F-I for every Track row in the pay week containing `ts`.
 //
 // This is the automated form of the hand cleanup done on 2026-07-27, when a
@@ -514,11 +475,9 @@ function recomputeTrackWeek(tab, ts) {
   var changed = [];
   for (var j = 0; j < members.length; j++) {
     var vals = [pay[j].grossWage, pay[j].netWage, pay[j].takeHome, pay[j].effectiveHourly];
-    // Written cell by cell through the header lookup rather than as one
-    // 4-wide range, so a future column insert between them can't scramble it.
-    for (var k = 0; k < money.length; k++) {
-      tab.getRange(members[j].row, money[k] + 1).setValue(vals[k]);
-    }
+    // Columns come from the header lookup, so an inserted column can't
+    // scramble them; writeCells only batches when they are still adjacent.
+    writeCells(tab, members[j].row, money, vals);
     formatTrackRow(tab, members[j].row);
     changed.push(members[j].ts.toISOString());
   }
@@ -726,7 +685,9 @@ function recomputeDorsetWeek(tab, ts) {
     if (!r || !(r[cTs] instanceof Date) || payWeekKey(r[cTs]) !== key) continue;
     var out = calc.byRow[i + 1];
     if (!out) continue;   // the tips row: its own columns stay blank
-    for (var k in cols) tab.getRange(i + 1, cols[k] + 1).setValue(out[k]);
+    writeCells(tab, i + 1,
+      [cols.grossWage, cols.tipsShare, cols.netWage, cols.takeHome, cols.effectiveHourly],
+      [out.grossWage, out.tipsShare, out.netWage, out.takeHome, out.effectiveHourly]);
     changed.push(r[cTs].toISOString());
     if (i + 1 === last) mine = out;
   }
