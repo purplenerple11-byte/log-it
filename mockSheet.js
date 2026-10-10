@@ -121,9 +121,30 @@ const MOCK_MATERIAL_ROWS = [
   [new Date(2026, 7, 14, 8, 0, 27), 'Get better toothbrush holder for wall', 'toothbrush holder', 'Supplies', '', '', '']
 ];
 
+// Dorset Inn, as the router writes it: shift rows with hours, one weekly tips
+// row with only Tips, computed columns left blank because readDorsetShifts
+// prices from hours and tips. The header is spelled out rather than read from
+// DORSET_HEADERS so this file still loads on the ideas page, which does not
+// load dorsetPay.js. The last week has no tips yet, to show "tips pending".
+const MOCK_DORSET_ROWS = [
+  ['Timestamp', 'Clock In', 'Clock Out', 'Hours', 'Tips', 'Notes',
+   'Gross Wage', 'Tips Share', 'Est. Net Wage', 'Total Take-Home', 'Eff. $/hr'],
+  [new Date(2026, 8, 22, 22, 10), '4:00pm', '10:00pm', 6,   '', 'first night',  '', '', '', '', ''],
+  [new Date(2026, 8, 24, 22, 40), '5:00pm', '10:30pm', 5.5, '', '',             '', '', '', '', ''],
+  [new Date(2026, 8, 26, 23, 5),  '3:00pm', '11:00pm', 8,   '', 'wedding',      '', '', '', '', ''],
+  [new Date(2026, 8, 27, 20, 0),  '',       '',        '',  310, 'weekly tips', '', '', '', '', ''],
+  [new Date(2026, 8, 30, 22, 15), '4:00pm', '10:00pm', 6,   '', '',             '', '', '', '', ''],
+  [new Date(2026, 9, 2, 23, 10),  '4:00pm', '11:00pm', 7,   '', '',             '', '', '', '', ''],
+  [new Date(2026, 9, 3, 23, 40),  '3:30pm', '11:30pm', 8,   '', 'leaf peepers', '', '', '', '', ''],
+  [new Date(2026, 9, 4, 20, 0),   '',       '',        '',  365, 'weekly tips', '', '', '', '', ''],
+  [new Date(2026, 9, 6, 22, 5),   '4:00pm', '10:00pm', 6,   '', '',             '', '', '', '', ''],
+  [new Date(2026, 9, 8, 22, 20),  '5:00pm', '10:00pm', 5,   '', '',             '', '', '', '', '']
+];
+
 // Mirrors handleRead('shifts') exactly, using the real server functions.
 function mockShiftsResponse() {
-  const shifts = readTrackShifts(MOCK_TRACK_ROWS).concat(readSusansShifts(MOCK_SUSANS_ROWS));
+  const shifts = readTrackShifts(MOCK_TRACK_ROWS).concat(readSusansShifts(MOCK_SUSANS_ROWS))
+    .concat(readDorsetShifts(MOCK_DORSET_ROWS));
   fillMissingPay(shifts);
   markDuplicates(shifts);
   return { success: true, fetched_at: new Date().toISOString(), shifts };

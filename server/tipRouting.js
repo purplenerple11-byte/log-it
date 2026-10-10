@@ -108,27 +108,38 @@ function resolveShiftDate(shiftDate, fallback) {
 
 // Which tab a tip entry belongs in. First match wins.
 //
-//   1. venue === 'susans'          → Susans   explicit name always wins
-//   2. venue === 'track'           → Track    explicit name always wins
-//   3. tips > 0                    → Track    tips are Track-only; Susans is flat $20/hr
-//   4. clock-in before noon        → Track    the original rule, now arithmetic
-//   5. clock-in noon or later      → Susans   the original rule
-//   6. nothing to go on            → Track    default
+//   1. venue names one             → that tab   explicit name always wins
+//   2. tips, but no hours or times → Dorset Inn  the weekly tips entry
+//   3. clock-in before noon        → Track
+//   4. clock-in noon or later      → Dorset Inn  (was Susans; Susans is finished)
+//   5. tips with hours, no times   → Track       Track logs tips with each shift
+//   6. nothing to go on            → Dorset Inn  the current job
+//
+// Tips used to outrank the clock because Susans was flat hourly and never
+// tipped, so a tip amount meant Track. Dorset Inn IS tipped, so a tip amount no
+// longer distinguishes the two and the clock decides again. Rule 6 used to say
+// Track; it is safe to move because a Track entry always carries tips (rule 5).
 function routeTip(data) {
   var d = data || {};
 
-  // Substring match, not equality: the model is told to emit "susans"/"track",
-  // but "Susan's", "susan", "the track" are all the same answer and depending on
-  // an exact token is the fragility this file exists to remove.
+  // Substring match, not equality: the model is told to emit "susans"/"track"/
+  // "dorset", but "Susan's", "the track", "the inn" are all the same answer and
+  // depending on an exact token is the fragility this file exists to remove.
   var venue = String(d.venue == null ? '' : d.venue).toLowerCase();
+  if (venue.indexOf('dorset') !== -1 || venue.indexOf('inn') !== -1) return 'Dorset Inn';
   if (venue.indexOf('susan') !== -1 || venue.indexOf('sue') !== -1) return 'Susans';
   if (venue.indexOf('track') !== -1 || venue.indexOf('valet') !== -1) return 'Track';
 
-  var tips = parseFloat(d.tips);
-  if (isFinite(tips) && tips > 0) return 'Track';
-
+  var tips  = parseFloat(d.tips);
+  var tipped = isFinite(tips) && tips > 0;
   var start = parseHHMM(d.clock_in);
-  if (start !== null) return start < 12 * 60 ? 'Track' : 'Susans';
+  var hours = parseFloat(d.hours);
+  var hasHours = isFinite(hours) && hours > 0;
 
-  return 'Track';
+  if (tipped && start === null && parseHHMM(d.clock_out) === null && !hasHours) {
+    return 'Dorset Inn';
+  }
+  if (start !== null) return start < 12 * 60 ? 'Track' : 'Dorset Inn';
+  if (tipped) return 'Track';
+  return 'Dorset Inn';
 }

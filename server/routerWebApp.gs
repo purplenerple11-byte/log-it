@@ -1,5 +1,5 @@
 // ================================================================
-// Log It — Router Web App  (v4.8 — Read + Write-Back Ops)
+// Log It — Router Web App  (v4.9 — Dorset Inn)
 // File:    routerWebApp.gs
 // Deploy:  Web App  |  Execute as: Me  |  Who has access: Anyone
 //
@@ -8,10 +8,19 @@
 //          trackPay.gs    (paste from server/trackPay.js)
 //          readApi.gs     (paste from server/readApi.js)
 //          sheetWrite.gs  (paste from server/sheetWrite.js)
+//          dorsetPay.gs   (paste from server/dorsetPay.js)
 //
 // SETUP: Apps Script → Project Settings → Script Properties
 //        Add:  GEMINI_API_KEY = your key from aistudio.google.com
 //        Add:  READ_TOKEN     = a long random string, also entered on the phone
+//
+// v4.9 changes: a third tip venue, the Dorset Inn ($10/hr busser, tips paid
+// weekly through payroll, Vermont withholding). An afternoon clock-in now means
+// Dorset Inn rather than Susans. A tips-only entry is that week's tips; it
+// lands in the week just ended unless a day is named, and every Dorset shift
+// in the week is re-priced when it arrives, because tips taxed through payroll
+// change the withholding for the whole paycheck. The tab creates itself on
+// first use. Withholding is an ESTIMATE until it can be fitted to a stub.
 //
 // v4.8 changes: doPost dispatches on an `op` field — absent/'log' is the
 // original path byte for byte, plus 'read', 'patch' and 'delete' for the
@@ -88,7 +97,7 @@ var SHEET_IDS = {
 // ================================================================
 var SYSTEM_PROMPT = 'You are a personal log entry parser. Extract structured data from the user\'s voice or text entry.\n\n'
 + 'CATEGORY CLASSIFICATION:\n'
-+ '- "tip":     shift work, hours worked, tips made, track / valet work, susan\'s, clock in/out\n'
++ '- "tip":     shift work, hours worked, tips made, track / valet work, susan\'s, Dorset Inn / the inn / bussing, weekly tips, clock in/out\n'
 + '- "meal":    eating, food items, meal types, supplements (creatine, fish oil, MCT, multivitamin)\n'
 + '- "idea":    idea, thought, concept, "what if", future plan, something to build or try\n'
 + '- "car":     oil change, repair, mileage, car maintenance, parts replaced, shop\n\n'
@@ -102,12 +111,15 @@ var SYSTEM_PROMPT = 'You are a personal log entry parser. Extract structured dat
 + 'server assumes today. Never guess or infer a date from anything but an explicit\n'
 + 'mention: a wrong date files the shift in the wrong pay week.\n\n'
 + 'TIP VENUE: set "venue" ONLY when the text explicitly names one — susan/sue/susans\n'
-+ '(any spelling) → "susans"; track/valet → "track". Otherwise null. Never infer venue\n'
++ '(any spelling) → "susans"; track/valet → "track"; dorset/dorset inn/the inn → "dorset".\n'
++ 'Otherwise null. Never infer venue\n'
 + 'from times or tip amounts, and never choose the tab yourself — the server does that.\n\n'
++ 'WEEKLY TIPS: an entry that only reports tips ("dorset tips 380", "380 in tips this\n'
++ 'week") is still category "tip": set "tips", leave hours and clock times null.\n\n'
 + 'TOLERANCE: Fix obvious typos (wokred→worked, susand→susans). Any variation of susan/sue/susans counts.\n\n'
 + 'IDEA MATERIALS: If an idea entry also mentions needing to buy/get something for the project (e.g. "fix the shop vac, need a new hose"), extract materials too. If no purchases mentioned, omit the "materials" key entirely.\n\n'
 + 'Return EXACTLY one of these JSON structures matching the category:\n\n'
-+ 'TIP:        {"category":"tip","data":{"venue":"<susans|track|null>","shift_date":"<YYYY-MM-DD|null>","clock_in":"<HH:MM|null>","clock_out":"<HH:MM|null>","hours":<number|null>,"tips":<number|null>,"notes":"<string>"}}\n'
++ 'TIP:        {"category":"tip","data":{"venue":"<susans|track|dorset|null>","shift_date":"<YYYY-MM-DD|null>","clock_in":"<HH:MM|null>","clock_out":"<HH:MM|null>","hours":<number|null>,"tips":<number|null>,"notes":"<string>"}}\n'
 + 'MEAL:       {"category":"meal","sub_route":"Log","data":{"meal":"<Breakfast|Lunch|Dinner|Snack>","foods":"<comma-separated>","creatine":"<\u2713 or empty>","fish_oil":"<\u2713 or empty>","mct":"<\u2713 or empty>","multivitamin":"<\u2713 or empty>","notes":"<string>"}}\n'
 + 'IDEA:       {"category":"idea","sub_route":"Ideas","data":{"title":"<5-7 words>","category":"<Business|Money|Creative|Personal|Random>","effort":"<Quick Win|Medium Project|Big Swing>","excitement":<1-5>,"next_step":"<string>","tags":"<comma-separated>","materials":[{"item":"<thing to buy>","category":"<Hardware|Tools|Supplies|Parts|Other>"}]}}\n'
 + 'CAR:        {"category":"car","sub_route":"Maintenance Log","data":{"type":"<Oil Change|Repair>","mileage":<number|null>,"description":"<string>","parts_replaced":"<string>","cost":<number|null>,"shop_diy":"<string>","notes":"<string>"}}\n\n'
@@ -364,6 +376,13 @@ function handleRead(body) {
     var ss = SpreadsheetApp.openById(sheetIds.tip || SHEET_IDS.tip);
     var shifts = readTrackShifts(getTab(ss, 'Track').getDataRange().getValues())
       .concat(readSusansShifts(getTab(ss, 'Susans').getDataRange().getValues()));
+    // getSheetByName, not getTab: getTab throws on a missing tab, and the Dorset
+    // tab only exists once the first Dorset shift has been logged. A throw here
+    // would take the whole shifts page down with it.
+    var dorsetTab = ss.getSheetByName(DORSET_VENUE);
+    if (dorsetTab) {
+      shifts = shifts.concat(readDorsetShifts(dorsetTab.getDataRange().getValues()));
+    }
     // Order of these two matters only for clarity: the pay repair works per
     // week and the duplicate scan sorts its own view, so neither depends on
     // how the two tabs were concatenated above.
@@ -419,7 +438,8 @@ function handlePatch(body) {
 
 // Remove one duplicate shift, then repair the pay week it was in.
 function handleDeleteShift(body) {
-  var venue   = String(body.venue || '') === 'Susans' ? 'Susans' : 'Track';
+  var asked   = String(body.venue || '');
+  var venue   = asked === 'Susans' ? 'Susans' : asked === DORSET_VENUE ? DORSET_VENUE : 'Track';
   var ss      = SpreadsheetApp.openById((body.sheet_ids || {}).tip || SHEET_IDS.tip);
   var tab     = getTab(ss, venue);
   var rows    = tab.getDataRange().getValues();
@@ -443,7 +463,11 @@ function handleDeleteShift(body) {
   // Susans is flat $20/hr with nothing derived from the week, so there is
   // nothing to repair. Track's stored net for every OTHER row in the week was
   // computed as though these hours were in it, so they are all now wrong.
-  var recomputed = venue === 'Track' ? recomputeTrackWeek(tab, ts) : [];
+  // Dorset re-prices the whole week too: one fewer shift changes everyone's
+  // share of the week's tips and withholding.
+  var recomputed = venue === 'Track' ? recomputeTrackWeek(tab, ts)
+                 : venue === DORSET_VENUE ? recomputeDorsetWeek(tab, ts).changed
+                 : [];
   return { success: true, deleted: ts.toISOString(), recomputed: recomputed };
 }
 
@@ -559,6 +583,9 @@ function handleTip(ss, sub_route, data, shift) {
   // is only a fallback for entries that state hours and no times.
   var hrs  = shiftHours(data.clock_in, data.clock_out, data.hours);
 
+  // Dorset is priced by the week, not the shift — see dorsetPay.gs.
+  if (sub_route === DORSET_VENUE) return handleDorset(ss, data, shift);
+
   if (sub_route === 'Track') {
     // Deduct 0.5 hours exclusively for Track shifts (the break is unpaid)
     hrs = Math.max(0, hrs - BREAK_DEDUCTION_HRS);
@@ -599,6 +626,116 @@ function handleTip(ss, sub_route, data, shift) {
     getTab(ss, 'Susans').appendRow([ts, inStr, outStr, hrs, pay, data.notes || '']);
     return 'Susans logged' + (back ? ' for ' + shortDateLabel(ts) : '') + ' — '
          + (inStr || '?') + ' to ' + (outStr || '?') + ', ' + pay + ' pay';
+  }
+}
+
+// ================================================================
+// DORSET INN HANDLER  (v4.9)
+// ================================================================
+// The tab creates itself the first time it is needed — no manual sheet setup.
+function getOrCreateTab(ss, name, headers) {
+  var t = ss.getSheetByName(name);
+  if (t) return t;
+  t = ss.insertSheet(name);
+  t.appendRow(headers);
+  t.setFrozenRows(1);
+  return t;
+}
+
+// Two shapes of entry land here: a shift (hours, usually clock times) and the
+// weekly tips (tips only). Either way the row is appended and then the WHOLE
+// week is re-priced, because tips taxed through payroll change the withholding
+// on every shift in that paycheck.
+function handleDorset(ss, data, shift) {
+  var tab  = getOrCreateTab(ss, DORSET_VENUE, DORSET_HEADERS);
+  var hrs  = shiftHours(data.clock_in, data.clock_out, data.hours);   // no break
+  var tips = parseFloat(data.tips);
+  if (!isFinite(tips) || tips < 0) tips = 0;
+
+  var tipsOnly = !(hrs > 0) && tips > 0;
+  if (!(hrs > 0) && !tipsOnly) {
+    throw new Error('No hours or tips found for the Dorset Inn entry');
+  }
+
+  var ts;
+  if (tipsOnly) {
+    // A named day wins ("tips for last week"); otherwise the week just ended,
+    // so tips logged on payday do not land in the week they were paid in.
+    ts = (shift && shift.reason === 'ok') ? shift.date : dorsetTipsWeekDate(now());
+  } else {
+    ts = (shift && shift.date instanceof Date) ? shift.date : now();
+  }
+
+  tab.appendRow([ts, to12h(data.clock_in), to12h(data.clock_out),
+                 hrs > 0 ? hrs : '', tips > 0 ? tips : '', data.notes || '',
+                 '', '', '', '', '']);
+  formatDorsetRow(tab, tab.getLastRow());
+  var result = recomputeDorsetWeek(tab, ts);
+  var week   = result.week;
+  var weekOf = shortDateLabel(payWeekStart(ts));
+
+  if (tipsOnly) {
+    if (!week || !week.shifts) {
+      return 'Dorset tips $' + tips + ' logged for the week of ' + weekOf
+           + ' — no shifts logged that week yet; it will price when they are';
+    }
+    return 'Dorset tips $' + tips + ' logged for the week of ' + weekOf
+         + ' · week take-home est. $' + week.net.toFixed(2)
+         + ' ($' + week.effectiveHourly.toFixed(2) + '/hr)';
+  }
+
+  var back = !!(shift && shift.backdated);
+  var mine = result.mine;
+  var msg  = 'Dorset Inn logged' + (back ? ' for ' + shortDateLabel(ts) : '')
+           + ' — ' + hrs + 'h, $' + (hrs * DORSET_WAGE_RATE).toFixed(2) + ' wage';
+  if (mine) msg += ' · est. take-home $' + mine.takeHome.toFixed(2);
+  if (week && !week.tipsLogged) msg += ' before tips';
+  return msg;
+}
+
+// Rewrite the computed columns for every shift in the pay week containing ts.
+// Returns { week, changed, mine } — `mine` is the row just appended, if it is
+// a shift, so the confirmation card can quote its share.
+function recomputeDorsetWeek(tab, ts) {
+  var rows = tab.getDataRange().getValues();
+  var h    = rows[0];
+  var cTs  = columnForHeader(h, 'Timestamp');
+  var cols = {
+    grossWage:       columnForHeader(h, 'Gross Wage'),
+    tipsShare:       columnForHeader(h, 'Tips Share'),
+    netWage:         columnForHeader(h, 'Est. Net Wage'),
+    takeHome:        columnForHeader(h, 'Total Take-Home'),
+    effectiveHourly: columnForHeader(h, 'Eff. $/hr')
+  };
+  for (var f in cols) {
+    if (cols[f] === -1) throw new Error('Dorset Inn tab is missing a pay column (' + f + ')');
+  }
+
+  var calc = dorsetComputeRows(rows);
+  var key  = payWeekKey(ts);
+  var changed = [], mine = null, last = rows.length;
+
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i];
+    if (!r || !(r[cTs] instanceof Date) || payWeekKey(r[cTs]) !== key) continue;
+    var out = calc.byRow[i + 1];
+    if (!out) continue;   // the tips row: its own columns stay blank
+    for (var k in cols) tab.getRange(i + 1, cols[k] + 1).setValue(out[k]);
+    changed.push(r[cTs].toISOString());
+    if (i + 1 === last) mine = out;
+  }
+  return { week: calc.weeks[key] || null, changed: changed, mine: mine };
+}
+
+// Positions follow DORSET_HEADERS, which this file wrote when it created the
+// tab. Cosmetic only — never lose a logged row over formatting.
+function formatDorsetRow(tab, row) {
+  try {
+    tab.getRange(row, 1).setNumberFormat('M/d/yyyy H:mm:ss');
+    tab.getRange(row, 4, 1, 2).setNumberFormat('0.##');    // hours, tips
+    tab.getRange(row, 7, 1, 5).setNumberFormat('0.00');    // the money columns
+  } catch (err) {
+    Logger.log('formatDorsetRow: ' + err.message);
   }
 }
 

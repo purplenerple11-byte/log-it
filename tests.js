@@ -626,8 +626,10 @@ if (new URLSearchParams(location.search).get('test') === '1') {
       { venue: null, clock_in: '09:18', clock_out: '18:50', tips: 350 }, 'Track'],
     ['9:18 in, 6:50 out, $350 in tips.',
       { venue: null, clock_in: '09:18', clock_out: '18:50', tips: 350 }, 'Track'],
-    // Time-only entries fall back to the clock-in rule.
-    ['2-4',   { venue: null, clock_in: '14:00', clock_out: '16:00', tips: null }, 'Susans'],
+    // Time-only entries fall back to the clock-in rule. Afternoon is Dorset Inn
+    // now — Susans is finished, and saying its name still reaches it.
+    ['2-4',   { venue: null, clock_in: '14:00', clock_out: '16:00', tips: null }, 'Dorset Inn'],
+    ['4-10',  { venue: null, clock_in: '16:00', clock_out: '22:00', tips: null }, 'Dorset Inn'],
     ['8-4',   { venue: null, clock_in: '08:00', clock_out: '16:00', tips: null }, 'Track'],
     ['11-7',  { venue: null, clock_in: '11:00', clock_out: '19:00', tips: null }, 'Track'],
     // An explicit venue outranks everything, in both directions.
@@ -635,12 +637,23 @@ if (new URLSearchParams(location.search).get('test') === '1') {
       { venue: 'susans', clock_in: '09:00', clock_out: '14:00', tips: null }, 'Susans'],
     ['track 2-8, 100 in tips',
       { venue: 'track', clock_in: '14:00', clock_out: '20:00', tips: 100 }, 'Track'],
-    // Tips outrank an afternoon clock-in: Susans is flat hourly, never tipped.
+    // Tips used to outrank an afternoon clock-in because Susans was never
+    // tipped. Dorset Inn is, so the clock-in decides again.
     ['2-8, 100 in tips',
-      { venue: null, clock_in: '14:00', clock_out: '20:00', tips: 100 }, 'Track'],
-    // Nothing to go on → Track, the historical default.
+      { venue: null, clock_in: '14:00', clock_out: '20:00', tips: 100 }, 'Dorset Inn'],
+    // Dorset tips arrive weekly with no hours attached. Track always logged its
+    // tips together with the shift, so a tips-only entry can only be Dorset.
+    ['dorset tips 380',
+      { venue: 'dorset', clock_in: null, clock_out: null, hours: null, tips: 380 }, 'Dorset Inn'],
+    ['380 in tips this week',
+      { venue: null, clock_in: null, clock_out: null, hours: null, tips: 380 }, 'Dorset Inn'],
+    // Hours AND tips with no clock times is still the Track shape.
+    ['worked 9 hours, 350 tips',
+      { venue: null, clock_in: null, clock_out: null, hours: 9, tips: 350 }, 'Track'],
+    // Nothing to go on → Dorset Inn, the current job. Safe because a Track
+    // entry always carries tips, which the rule above routes to Track.
     ['worked 6 hours',
-      { venue: null, clock_in: null, clock_out: null, tips: null }, 'Track']
+      { venue: null, clock_in: null, clock_out: null, hours: 6, tips: null }, 'Dorset Inn']
   ];
   for (const [entry, data, expected] of ROUTING_CASES) {
     test('routeTip: "' + entry + '" → ' + expected, () => {
@@ -648,13 +661,13 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     });
   }
   test('routeTip: tolerates missing/garbage input without throwing', () => {
-    assertEq(routeTip(), 'Track', 'undefined');
-    assertEq(routeTip({}), 'Track', 'empty object');
+    assertEq(routeTip(), 'Dorset Inn', 'undefined');
+    assertEq(routeTip({}), 'Dorset Inn', 'empty object');
     assertEq(routeTip({ venue: 'SUSANS' }), 'Susans', 'venue is case-insensitive');
-    assertEq(routeTip({ venue: 'null' }), 'Track', 'the literal string "null" is not a venue');
-    assertEq(routeTip({ tips: 0 }), 'Track', 'zero tips is not a tips signal');
-    assertEq(routeTip({ tips: 'abc', clock_in: '14:00' }), 'Susans', 'unparseable tips ignored');
-    assertEq(routeTip({ clock_in: 'half past nine' }), 'Track', 'unparseable time falls to default');
+    assertEq(routeTip({ venue: 'null' }), 'Dorset Inn', 'the literal string "null" is not a venue');
+    assertEq(routeTip({ tips: 0 }), 'Dorset Inn', 'zero tips is not a tips signal');
+    assertEq(routeTip({ tips: 'abc', clock_in: '14:00' }), 'Dorset Inn', 'unparseable tips ignored');
+    assertEq(routeTip({ clock_in: 'half past nine' }), 'Dorset Inn', 'unparseable time falls to default');
   });
   test('routeTip: venue survives the spellings the model actually emits', () => {
     // Track wins on tips alone, so pair each with an afternoon clock-in that
@@ -663,10 +676,13 @@ if (new URLSearchParams(location.search).get('test') === '1') {
       assertEq(routeTip({ venue: v, clock_in: '09:00' }), 'Susans', 'venue ' + JSON.stringify(v));
     for (const v of ['track', 'the track', 'valet', 'Valet'])
       assertEq(routeTip({ venue: v, clock_in: '14:00' }), 'Track', 'venue ' + JSON.stringify(v));
+    // And a morning clock-in that would otherwise say Track.
+    for (const v of ['dorset', 'Dorset Inn', 'the inn', 'DORSET'])
+      assertEq(routeTip({ venue: v, clock_in: '09:00' }), 'Dorset Inn', 'venue ' + JSON.stringify(v));
   });
-  test('routeTip: noon is the boundary — 11:59 Track, 12:00 Susans', () => {
+  test('routeTip: noon is the boundary — 11:59 Track, 12:00 Dorset Inn', () => {
     assertEq(routeTip({ clock_in: '11:59' }), 'Track');
-    assertEq(routeTip({ clock_in: '12:00' }), 'Susans');
+    assertEq(routeTip({ clock_in: '12:00' }), 'Dorset Inn');
   });
 
   test('shiftHours: computed from the clock times, not the model', () => {
@@ -1569,19 +1585,19 @@ if (new URLSearchParams(location.search).get('test') === '1') {
       TRACK(new Date(2026, 7, 9), 9.68, 219, 334.90, 115.90),
       SUSANS(new Date(2026, 7, 5), 5, 100)
     ]);
-    assertEq(s.trackTakeHome, 688.76);
-    assertEq(s.trackHours, 18.85);
+    assertEq(s.paidTakeHome, 688.76);
+    assertEq(s.paidHours, 18.85);
     assertEq(s.susansGross, 100);
     assertEq(s.shifts, 3);
   });
   test('summarize: effective hourly is take-home over Track hours', () => {
     const s = summarize([TRACK(new Date(2026, 7, 2), 10, 242, 350, 108)]);
-    assertEq(s.trackEffHourly, 35);
+    assertEq(s.paidEffHourly, 35);
   });
   test('summarize: no Track hours yields no divide-by-zero', () => {
     const s = summarize([SUSANS(new Date(2026, 7, 5), 5, 100)]);
-    assertEq(s.trackEffHourly, 0);
-    assertEq(s.trackTakeHome, 0);
+    assertEq(s.paidEffHourly, 0);
+    assertEq(s.paidTakeHome, 0);
   });
 
   test('bucketShifts: day granularity groups by calendar day', () => {
@@ -1907,6 +1923,154 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     const list = [IDEA(new Date(2026, 5, 1), 'old'), IDEA(new Date(2026, 7, 1), 'new')];
     sortIdeas(list, 'newest');
     assertEq(list[0].title, 'old');
+  });
+
+  // ---- DORSET INN PAY (server/dorsetPay.js) ----
+  // Vermont 2026, single, 0 allowances: annual wages, the GB-1210-2026 table,
+  // then /52. Every expected figure here was worked out by hand from the
+  // published table, not read back from the implementation.
+  test('vtWeekly: $500/week → $14.22', () => {
+    // 26,000 − 3,925 = 22,075 × 3.35% = 739.51 / 52
+    assertEq(round2(vtWeekly(500)), 14.22);
+  });
+  test('vtWeekly: under the zero band withholds nothing', () => {
+    assertEq(vtWeekly(70), 0);    // 3,640/yr is under 3,925
+    assertEq(vtWeekly(0), 0);
+  });
+  test('vtWeekly: crosses into the 6.6% band at $1,200/week', () => {
+    // 1,700.13 on the first 54,675 + 6.6% × 7,725 = 2,209.98 / 52
+    assertEq(round2(vtWeekly(1200)), 42.5);
+  });
+  test('dorsetWeeklyDeductions: no NY lines — no PFL, no SDI', () => {
+    const d = dorsetWeeklyDeductions(480);
+    assertEq(d.fica, 29.76);
+    assertEq(d.medicare, 6.96);
+    assertEq(d.federal, 17.04);
+    assertEq(d.vt, 13.55);
+    assertEq(d.total, 67.31);
+    assert(!('pfl' in d) && !('sdi' in d), 'Vermont has no NY payroll lines');
+  });
+
+  test('allocateDorsetWeek: tips are taxed with the wage', () => {
+    // 18h × $10 = 180 wage + 300 tips = 480 gross; 480 − 67.31 = 412.69.
+    const a = allocateDorsetWeek([6, 5, 7], 300);
+    assertEq(a.week.gross, 480);
+    assertEq(a.week.net, 412.69);
+    assert(a.week.net < 180 + 300, 'tips go through payroll, so they are taxed');
+  });
+  test('allocateDorsetWeek: splits by hours and sums to the week exactly', () => {
+    const a = allocateDorsetWeek([6, 5, 7], 300);
+    assertEq(a.rows.map((r) => r.takeHome).join(','), '137.56,114.64,160.49');
+    assertEq(a.rows.map((r) => r.tipsShare).join(','), '100,83.33,116.67');
+    assertEq(a.rows.map((r) => r.grossWage).join(','), '60,50,70');
+    // The last row takes the rounding remainder, so nothing leaks a cent.
+    assertEq(round2(a.rows.reduce((n, r) => n + r.takeHome, 0)), 412.69);
+    assertEq(round2(a.rows.reduce((n, r) => n + r.tipsShare, 0)), 300);
+  });
+  test('allocateDorsetWeek: every shift in a week earns the same hourly', () => {
+    // Tips are weekly, so no single day can claim a better rate than another.
+    const a = allocateDorsetWeek([6, 5, 7], 300);
+    assertEq(a.week.effectiveHourly, 22.93);
+    for (const r of a.rows) assertEq(r.effectiveHourly, 22.93);
+  });
+  test('allocateDorsetWeek: net wage + tips share = take-home, per shift', () => {
+    const a = allocateDorsetWeek([6, 5, 7], 300);
+    for (const r of a.rows) assertEq(round2(r.netWage + r.tipsShare), r.takeHome);
+  });
+  test('allocateDorsetWeek: before tips are logged, wage only', () => {
+    // 11h × $10 = 110; FICA 6.82 + Medicare 1.60 + VT 1.16, no federal.
+    const a = allocateDorsetWeek([6, 5], 0);
+    assertEq(a.week.net, 100.42);
+    for (const r of a.rows) assertEq(r.tipsShare, 0);
+  });
+  test('allocateDorsetWeek: no break is deducted', () => {
+    assertEq(allocateDorsetWeek([6], 0).week.hours, 6);
+  });
+
+  test('dorsetTipsWeekDate: Monday through Saturday mean the week just ended', () => {
+    const sun = new Date(2026, 9, 11, 20, 0, 0).getTime();   // Sun Oct 11
+    assertEq(dorsetTipsWeekDate(new Date(2026, 9, 12, 10, 0)).getTime(), sun, 'Mon');
+    assertEq(dorsetTipsWeekDate(new Date(2026, 9, 15, 18, 0)).getTime(), sun, 'Thu payday');
+    assertEq(dorsetTipsWeekDate(new Date(2026, 9, 10, 9, 0)).getTime(),
+      new Date(2026, 9, 4, 20, 0, 0).getTime(), 'Sat → the week before');
+  });
+  test('dorsetTipsWeekDate: Sunday means the week ending today', () => {
+    assertEq(dorsetTipsWeekDate(new Date(2026, 9, 11, 22, 30)).getTime(),
+      new Date(2026, 9, 11, 20, 0, 0).getTime());
+  });
+
+  const DORSET_ROWS = () => [
+    ['Timestamp', 'Clock In', 'Clock Out', 'Hours', 'Tips', 'Notes',
+     'Gross Wage', 'Tips Share', 'Est. Net Wage', 'Total Take-Home', 'Eff. $/hr'],
+    [new Date(2026, 9, 6, 22, 0),  '4:00pm', '10:00pm', 6, '', '', '', '', '', '', ''],
+    [new Date(2026, 9, 7, 22, 0),  '5:00pm', '10:00pm', 5, '', '', '', '', '', '', ''],
+    [new Date(2026, 9, 9, 23, 0),  '4:00pm', '11:00pm', 7, '', '', '', '', '', '', ''],
+    [new Date(2026, 9, 11, 20, 0), '', '', '', 300, 'weekly tips', '', '', '', '', ''],
+    // Following week: shifts logged, tips not yet.
+    [new Date(2026, 9, 13, 22, 0), '4:00pm', '10:00pm', 6, '', '', '', '', '', '', '']
+  ];
+  test('readDorsetShifts: the tips row is not a shift', () => {
+    const s = readDorsetShifts(DORSET_ROWS());
+    assertEq(s.length, 4);
+    assert(s.every((x) => x.hours > 0), 'only rows with hours are shifts');
+  });
+  test('readDorsetShifts: each shift carries its share of that week', () => {
+    const s = readDorsetShifts(DORSET_ROWS());
+    assertEq(s[0].venue, 'Dorset Inn');
+    assertEq(s.slice(0, 3).map((x) => x.pay.takeHome).join(','), '137.56,114.64,160.49');
+    assertEq(s.slice(0, 3).map((x) => x.tips).join(','), '100,83.33,116.67');
+    assertEq(s[0].pay.tipsLogged, true);
+  });
+  test('readDorsetShifts: a week with no tips yet says so', () => {
+    const s = readDorsetShifts(DORSET_ROWS());
+    assertEq(s[3].pay.tipsLogged, false);
+    assertEq(s[3].tips, 0);
+  });
+  test('readDorsetShifts: marked as an estimate until a paystub calibrates it', () => {
+    assertEq(readDorsetShifts(DORSET_ROWS())[0].pay.source, 'estimate');
+  });
+  test('dorsetComputeRows: tips written on a shift row join the weekly pool', () => {
+    const rows = DORSET_ROWS().slice(0, 4);
+    rows[1][4] = 300;                       // the tips moved onto Tue's shift
+    const c = dorsetComputeRows(rows);
+    assertEq(c.weeks['2026-10-05'].tips, 300);
+    assertEq(c.weeks['2026-10-05'].net, 412.69);
+  });
+
+  test('summarize: Dorset and Track take-home add up — both are after tax', () => {
+    const d = readDorsetShifts(DORSET_ROWS())[0];
+    const s = summarize([TRACK(new Date(2026, 7, 2), 9.17, 242, 353.86, 111.86), d,
+                         SUSANS(new Date(2026, 7, 5), 5, 100)]);
+    assertEq(s.paidTakeHome, round2(353.86 + d.pay.takeHome));
+    assertEq(s.paidShifts, 2);
+    assertEq(s.susansGross, 100, 'Susans is gross and stays separate');
+  });
+
+  test('router: the prompt knows Dorset Inn exists', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    assert(src.indexOf('"venue":"<susans|track|dorset|null>"') !== -1, 'venue enum');
+    assert(/dorset/i.test(src.slice(src.indexOf('TIP VENUE'), src.indexOf('TOLERANCE'))),
+      'the venue rule must name dorset');
+    assert(/dorset inn/i.test(src.slice(src.indexOf('CATEGORY CLASSIFICATION'), src.indexOf('TIME FORMAT'))),
+      'a Dorset shift has to be classified as tip work at all');
+  });
+  test('router: Dorset Inn has its own handler and creates its tab', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    assert(src.indexOf('handleDorset(ss, data, shift)') !== -1, 'handleTip must branch to Dorset');
+    assert(src.indexOf('getOrCreateTab(ss, DORSET_VENUE, DORSET_HEADERS)') !== -1,
+      'first use creates the tab — no manual sheet setup');
+  });
+  test('router: every Dorset log recomputes its week', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    const body = src.slice(src.indexOf('function handleDorset'));
+    assert(body.indexOf('tab.appendRow(') < body.indexOf('recomputeDorsetWeek(tab, ts)'),
+      'append, then recompute — weekly tips change every shift in that week');
+  });
+  test('router: a missing Dorset tab cannot break the shifts read', async () => {
+    const src = await fetchText('server/routerWebApp.gs');
+    const read = src.slice(src.indexOf('function handleRead'), src.indexOf('function handlePatch'));
+    assert(read.indexOf('getSheetByName(DORSET_VENUE)') !== -1,
+      'getTab throws on a missing tab; the read must tolerate one');
   });
 
   runTests();

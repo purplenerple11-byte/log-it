@@ -2,10 +2,11 @@
 // Log It — Shift aggregation (pure; no DOM, no network)
 // Loaded by shifts.html, and by the harness under ?test=1.
 //
-// The one rule this file exists to enforce: Track's take-home is net of
-// withholding plus tips, while Susans' $20/hr is GROSS with no withholding
-// modeled at all. They are reported side by side and never added — a single
-// figure built from both would be part post-tax and part pre-tax.
+// The one rule this file exists to enforce: Track's and Dorset Inn's take-home
+// are both after withholding, so they add up — the `paid*` totals. Susans'
+// $20/hr is GROSS with no withholding modeled at all, so it is reported beside
+// them and never added: a figure built from both would be part post-tax and
+// part pre-tax.
 //
 // Pay weeks are NOT computed here. Every shift arrives from the server already
 // tagged with the Monday of its pay week, produced by the same payWeekStart
@@ -94,28 +95,28 @@ function trimLeadingEmpty(buckets, valueOf) {
 
 function summarize(shifts) {
   const out = {
-    trackTakeHome: 0, trackTips: 0, trackNetWage: 0, trackHours: 0,
-    susansGross: 0, susansHours: 0, trackEffHourly: 0, shifts: 0, trackShifts: 0
+    paidTakeHome: 0, paidTips: 0, paidNetWage: 0, paidHours: 0,
+    susansGross: 0, susansHours: 0, paidEffHourly: 0, shifts: 0, paidShifts: 0
   };
   if (!Array.isArray(shifts)) return out;
 
   for (const s of shifts) {
     if (!s) continue;
     out.shifts++;
-    if (s.venue !== 'Susans') out.trackShifts++;
+    if (s.venue !== 'Susans') out.paidShifts++;   // every after-tax venue
     if (s.venue === 'Susans') {
       out.susansGross = cents(out.susansGross + (Number(s.grossPay) || 0));
       out.susansHours = cents(out.susansHours + (Number(s.hours) || 0));
       continue;
     }
-    out.trackHours = cents(out.trackHours + (Number(s.hours) || 0));
+    out.paidHours = cents(out.paidHours + (Number(s.hours) || 0));
     if (!s.pay) continue;
-    out.trackTips = cents(out.trackTips + (Number(s.tips) || 0));
-    out.trackNetWage = cents(out.trackNetWage + (Number(s.pay.net) || 0));
-    out.trackTakeHome = cents(out.trackTakeHome + (Number(s.pay.takeHome) || 0));
+    out.paidTips = cents(out.paidTips + (Number(s.tips) || 0));
+    out.paidNetWage = cents(out.paidNetWage + (Number(s.pay.net) || 0));
+    out.paidTakeHome = cents(out.paidTakeHome + (Number(s.pay.takeHome) || 0));
   }
 
-  out.trackEffHourly = out.trackHours > 0 ? cents(out.trackTakeHome / out.trackHours) : 0;
+  out.paidEffHourly = out.paidHours > 0 ? cents(out.paidTakeHome / out.paidHours) : 0;
   return out;
 }
 

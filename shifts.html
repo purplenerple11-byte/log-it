@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#121316">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <link rel="icon" type="image/png" href="icons/icon-192.png">
-  <link rel="stylesheet" href="theme.css?v=20260817a">
+  <link rel="stylesheet" href="theme.css?v=20261009a">
   <title>Shifts — Log It</title>
 </head>
 <body>
@@ -48,11 +48,7 @@
   <div class="xlab" id="xlab"></div>
   <div class="zoomhint" id="zoomhint"></div>
 
-  <div class="chips" role="group" aria-label="Venue">
-    <button class="chip" data-venue="all" aria-pressed="true">All</button>
-    <button class="chip" data-venue="Track" aria-pressed="false">Track</button>
-    <button class="chip" data-venue="Susans" aria-pressed="false">Susans</button>
-  </div>
+  <div class="chips" id="venues" role="group" aria-label="Venue"></div>
   <div id="log"></div>
 </div>
 
@@ -62,9 +58,9 @@
   <div class="skeleton" style="width:70%;margin:0 auto"></div>
 </div>
 
-<script src="shiftStats.js?v=20260817a"></script>
-<script src="dataClient.js?v=20260817a"></script>
-<script src="ui.js?v=20260817a"></script>
+<script src="shiftStats.js?v=20261009a"></script>
+<script src="dataClient.js?v=20261009a"></script>
+<script src="ui.js?v=20261009a"></script>
 <script>
 const MOCK = new URLSearchParams(location.search).get('mock') === '1';
 
@@ -104,10 +100,10 @@ function renderSummary(shown) {
     return;
   }
   $('sum-k').textContent = 'Take-home';
-  $('sum-v').textContent = money0(s.trackTakeHome);
-  $('sum-s').textContent = money0(s.trackTips) + ' tips + ' + money0(s.trackNetWage) + ' wage';
-  $('eff-v').textContent = money(s.trackEffHourly);
-  $('eff-s').textContent = s.trackHours + 'h over ' + s.trackShifts + ' Track shifts'
+  $('sum-v').textContent = money0(s.paidTakeHome);
+  $('sum-s').textContent = money0(s.paidTips) + ' tips + ' + money0(s.paidNetWage) + ' wage';
+  $('eff-v').textContent = money(s.paidEffHourly);
+  $('eff-s').textContent = s.paidHours + 'h over ' + s.paidShifts + ' shifts'
     + (s.susansGross ? ' · Susans ' + money0(s.susansGross) + ' gross, separate' : '');
 }
 
@@ -130,7 +126,7 @@ function renderChart(shown) {
     ? '<span><span class="swatch" style="background:var(--wage)"></span>Gross pay, before tax</span>'
     : '<span><span class="swatch" style="background:var(--action)"></span>Tips</span>'
       + '<span><span class="swatch" style="background:var(--wage)"></span>Net wage</span>'
-      + '<span style="margin-left:auto">Track take-home</span>';
+      + '<span style="margin-left:auto">take-home</span>';
   $('legend').innerHTML = legendBase;
 
   $('chart').innerHTML = buckets.map((b) => {
@@ -259,10 +255,13 @@ function renderLog(shown) {
     const isOpen = openRow === i;
     const amt = s.venue === 'Susans' ? s.grossPay : (s.pay ? s.pay.takeHome : null);
     const rate = s.venue === 'Susans' ? 20 : (s.pay ? s.pay.effHourly : null);
-    const est = s.pay && s.pay.source === 'computed';
+    const est = s.pay && s.pay.source !== 'sheet';
 
     let meta = s.venue + ' · ' + s.hours + 'h';
-    if (s.tips) meta += ' · ' + money0(s.tips) + ' tips';
+    // Dorset tips arrive weekly: a shift shows its share of the week's tips, or
+    // says the week's tips have not been logged yet.
+    if (s.pay && s.pay.tipsLogged === false) meta += ' · tips pending';
+    else if (s.tips) meta += ' · ' + money0(s.tips) + (s.venue === 'Dorset Inn' ? ' tips share' : ' tips');
     if (s.dupeOf) meta += ' · <span class="flag">possible duplicate</span>';
 
     return '<button class="row" data-i="' + i + '">'
@@ -298,6 +297,15 @@ function detailHtml(s, i) {
     if (s.pay.source === 'computed') {
       h += '<br><span class="est">Estimated — this row predates the pay columns, '
          + 'so these are recomputed, not stored.</span>';
+    }
+    if (s.pay.source === 'estimate') {
+      h += '<br><span class="est">Estimated — Vermont withholding, not yet checked '
+         + 'against a real paystub. Tips are shared across the week by hours, so '
+         + 'every shift that week shows the same $/hr.</span>';
+    }
+    if (s.pay.tipsLogged === false) {
+      h += '<br><span class="est">This week\'s tips aren\'t logged yet — this is '
+         + 'wage only. Log them as e.g. "dorset tips 380".</span>';
     }
   }
   if (s.dupeOf) {
@@ -374,6 +382,7 @@ function show(which) {
 
 function accept(data, fresh) {
   SHIFTS = hydrateShifts(data.shifts);
+  renderVenueChips();
   show('main');
   setStamp(fresh ? '' : 'as of ' + timeLabel(new Date(data.fetched_at)), !fresh);
   renderAll();
@@ -399,20 +408,34 @@ function syncSeg() {
   $('seg-month').setAttribute('aria-pressed', String(grain === 'month'));
 }
 
-document.querySelectorAll('.chip').forEach((c) => {
-  c.onclick = () => {
-    venue = c.dataset.venue;
-    openRow = null;
-    // Changing venue is a context switch, so the drill-down is dropped. Keeping
-    // it strands you when the new venue has no shifts that week: the bar is
-    // gone from the chart, so there is nothing left to tap to get back, but the
-    // log is still filtered to it and reads as empty for no visible reason.
-    zoomWeek = null;
-    document.querySelectorAll('.chip').forEach((x) =>
-      x.setAttribute('aria-pressed', String(x.dataset.venue === venue)));
-    renderAll();
-  };
-});
+// Venue chips come from the data — most recently worked first — so a new job
+// appears without touching the markup, and a finished one sinks to the end.
+function renderVenueChips() {
+  const latest = new Map();
+  for (const s of SHIFTS) {
+    const t = s.ts.getTime();
+    if (!latest.has(s.venue) || latest.get(s.venue) < t) latest.set(s.venue, t);
+  }
+  const venues = Array.from(latest.keys()).sort((a, b) => latest.get(b) - latest.get(a));
+  if (venue !== 'all' && venues.indexOf(venue) === -1) venue = 'all';
+  $('venues').innerHTML = ['all'].concat(venues).map((v) =>
+    '<button class="chip" data-venue="' + escapeHtml(v) + '" aria-pressed="' + (v === venue) + '">'
+    + (v === 'all' ? 'All' : escapeHtml(v)) + '</button>').join('');
+  $('venues').querySelectorAll('.chip').forEach((c) => {
+    c.onclick = () => {
+      venue = c.dataset.venue;
+      openRow = null;
+      // Changing venue is a context switch, so the drill-down is dropped. Keeping
+      // it strands you when the new venue has no shifts that week: the bar is
+      // gone from the chart, so there is nothing left to tap to get back, but the
+      // log is still filtered to it and reads as empty for no visible reason.
+      zoomWeek = null;
+      $('venues').querySelectorAll('.chip').forEach((x) =>
+        x.setAttribute('aria-pressed', String(x.dataset.venue === venue)));
+      renderAll();
+    };
+  });
+}
 
 $('key-save').onclick = () => {
   const v = $('key').value.trim();
@@ -426,8 +449,9 @@ if (MOCK) {
   // The fixture runs on the real server modules, so ?mock=1 proves the read
   // pipeline end to end without a deploy. Dev only — production never loads
   // server logic.
-  let left = 3;
-  for (const src of ['server/trackPay.js', 'server/readApi.js', 'mockSheet.js']) {
+  let left = 4;
+  for (const src of ['server/trackPay.js', 'server/readApi.js', 'server/dorsetPay.js',
+                     'mockSheet.js']) {
     const el = document.createElement('script');
     el.src = src + '?cb=' + Date.now();
     el.async = false;
