@@ -56,7 +56,7 @@ The **read pages** (v4.8) sit alongside it and share nothing but `theme.css` and
 `shifts.html` + `shiftStats.js`, `ideas.html` + `ideaModel.js`, both on `dataClient.js`, plus two
 more server modules `server/readApi.js` (→ `readApi.gs`) and `server/sheetWrite.js`
 (→ `sheetWrite.gs`). `mockSheet.js` is a dev fixture holding the real sheet rows, loaded only
-under `?mock=1`.
+under `?mock=1`. **Dorset Inn** (v4.9) adds `server/dorsetPay.js` (→ live file `dorsetPay`).
 
 ### Invariants — these are load-bearing, don't undo them
 
@@ -122,7 +122,7 @@ under `?mock=1`.
 - **Apps Script does not auto-sync, and its filenames differ from the repo's.** The live project
   is "Log It - Router" (Drive id `1Np9nv59S7Zuu4r-ABdXUPCEtZDRFAuYcAu5cfgcNfM8_GDVAIb1guZpV`)
   and its files are `Code` ← `server/routerWebApp.gs`, `tipRouter` ← `server/tipRouting.js`,
-  `trackPay`, and as of v4.8 `readApi` and `sheetWrite`. **Paste into the existing file names.**
+  `trackPay`, as of v4.8 `readApi` and `sheetWrite`, and as of v4.9 `dorsetPay`. **Paste into the existing file names.**
   Adding a `routerWebApp` beside the existing `Code` would put two `doPost` definitions in one
   project, and Apps Script shares one global scope per project, so whichever loads last silently
   wins. `server/routerWebApp.gs` is the source of truth by convention
@@ -131,14 +131,17 @@ under `?mock=1`.
   in as the user). Write a `.clasp.json` holding the script id into a scratch dir, then
   `clasp pull` / `clasp push --force` / `clasp list-deployments`. **Push replaces the whole
   project — every file must be present locally or it is deleted remotely.** The live file set is
-  `appsscript.json`, `Code`, `tipRouter`, `trackPay`, `readApi`, `sheetWrite`.
+  `appsscript.json`, `Code`, `tipRouter`, `trackPay`, `readApi`, `sheetWrite`, `dorsetPay`.
+  Before pushing, `clasp pull` and diff against `HEAD` — that is how you know nobody edited the
+  live script in the editor and the push won't silently revert it.
   Drive also works read-only for a quick diff (`download_file_content` with
   `exportMimeType: application/vnd.google-apps.script+json` returns base64 of a
   `{files:[{name,type,source}]}` bundle).
   **Push and publish are separate.** A push only moves the project's HEAD; the `/exec` URL keeps
-  serving whatever version the deployment points at (currently `AKfycbx4Vyy…` @18), so a push
-  alone cannot break the live app. Publishing means bumping that deployment to a new version —
-  do it only when the user says so, since it is a live deploy.
+  serving whatever version the deployment points at (currently `AKfycbx4Vyy…` **@20**), so a push
+  alone cannot break the live app. Publishing = `clasp create-version` then
+  `clasp update-deployment -V <n> AKfycbx4Vyy…` — the user prefers Claude deploy rather than hand
+  over paste steps (global CLAUDE.md), and it works from here as of v4.9.
   **Still manual, no CLI and no API:** Script Properties (so `GEMINI_API_KEY` and `READ_TOKEN`
   are always a hand paste) and anything needing a function run, including triggers. After any server change, remind the
   user to paste it in and publish — nothing happens otherwise. Publishing means **Deploy →
@@ -173,8 +176,9 @@ under `?mock=1`.
   both orderings against the `.gs` source. `tokenMatches` **fails closed when `READ_TOKEN` is
   unset** — a plain equality check would compare `''` to `''` and turn a forgotten setup step into
   a public feed of income history and ideas.
-- **Track's take-home and Susans' pay are different units and must never be summed.** Track's
-  figure is net of withholding plus tips; Susans' $20/hr is gross, with no withholding modeled.
+- **Susans' pay is gross and must never be summed with the after-tax venues.** Track's and Dorset
+  Inn's take-home are both net of withholding, so they DO add up (the `paid*` totals in
+  `shiftStats.js`); Susans' $20/hr is gross, with no withholding modeled.
   This was violated once already *in the chart* while the totals were correct — Susans gross was
   stacked on Track net under a legend reading "Net wage". The chart now plots one venue at a time.
   Susans is finished; the next job (bartending or cooking) will need its own wage rate and a
@@ -192,6 +196,23 @@ under `?mock=1`.
   were present. `recomputeTrackWeek` rewrites them — the automated form of the hand cleanup on
   2026-07-27, where a survivor was left $23.37 too high. The same `recomputeWeek` fills in the 16
   pre-v4.5 rows at read time, for display only.
+- **Dorset Inn is priced by the week, never by the shift** (v4.9, `server/dorsetPay.js`). Busser,
+  `DORSET_WAGE_RATE` $10/hr, no break deducted. Tips arrive **once a week and go through payroll**,
+  so they are taxed together with the wage — which means a shift has no pay of its own until the
+  week's tips are known. The week is priced whole (wage + tips → FICA, Medicare, federal
+  percentage method, **Vermont** 2026 table; no NY PFL/SDI, it's a Vermont employer) and each shift
+  gets the share proportional to its hours, so every shift in a week shows the same $/hr. The last
+  row takes the rounding remainder so the week sums to the cent. Logging the tips re-prices the
+  whole week (`recomputeDorsetWeek`), as does deleting a shift. A tips-only entry with no named day
+  lands in the **week just ended** (Mon–Sat → previous week; Sunday → this week). Vermont is the real
+  published table, but `VT_ALLOWANCES = 0` and the Mon–Sun week are **assumptions — re-fit against
+  the first Dorset paystub**, exactly as Track was. Rows read as `source: 'estimate'` until then.
+  The Dorset tab creates itself on first log (`getOrCreateTab`); the shifts read uses
+  `getSheetByName` so a missing tab can't throw.
+- **Tip routing order changed in v4.9** (`routeTip`): explicit venue → tips with no hours/times =
+  Dorset weekly tips → clock-in before noon Track / noon+ Dorset Inn → tips with hours = Track →
+  default Dorset Inn. "Tips outrank the clock" is gone: it only existed because Susans was never
+  tipped. Susans is finished but still reachable by name.
 - **A blank Ideas `Status` cell reads as Active.** That is what let 25 existing rows work with no
   backfill write; don't "fix" it by stamping Active into the sheet.
 - **All paths must stay relative.** `start_url`/`scope` in `manifest.json`, the `tests.js` injection,
@@ -230,7 +251,7 @@ Voice capture is **press-and-hold** (`pointerdown`/`up`/`leave`/`cancel`) with
 
 ### Categories
 
-tip (Track|Susans tabs), meal (Log + Daily Summary), idea (Ideas + Materials),
+tip (Track|Dorset Inn|Susans tabs), meal (Log + Daily Summary), idea (Ideas + Materials),
 car (Maintenance Log). Grocery was retired in router v4.4 (moved to a dedicated app) —
 no routing guardrail replaced it, so a grocery-ish entry now lands in the nearest
 remaining category by design.

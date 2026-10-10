@@ -1,4 +1,4 @@
-# Log It — Session Handoff (2026-08-17)
+# Log It — Session Handoff (2026-10-09)
 
 Read this first. It's the state of the project, how we work, and what's next.
 
@@ -16,13 +16,13 @@ capital M).
 PWA (index.html, GitHub Pages)
   → fetch POST text/plain (avoids CORS preflight)
     → Google Apps Script Web App  ("Execute as: Me", access: Anyone)
-       source of truth in repo: server/routerWebApp.gs (v4.8) +
-         tipRouting.js + trackPay.js + readApi.js + sheetWrite.js, all in the
-         SAME Apps Script project ("Log It - Router"), whose file names are
-         Code / tipRouter / trackPay / readApi / sheetWrite — NOT the repo's
-         names. Apps Script shares one global scope per project.
+       source of truth in repo: server/routerWebApp.gs (v4.9) +
+         tipRouting.js + trackPay.js + readApi.js + sheetWrite.js +
+         dorsetPay.js, all in the SAME Apps Script project ("Log It -
+         Router"), whose file names are Code / tipRouter / trackPay / readApi /
+         sheetWrite / dorsetPay — NOT the repo's names. One global scope.
        ⚠ Claude can push with `clasp`, but push ≠ publish: the /exec URL
-         serves whatever version the deployment names. Currently @19.
+         serves whatever version the deployment names. Currently @20.
          Publishing = bump that deployment, NOT "New deployment", which mints
          a fresh /exec URL while CFG_DEFAULTS still points at the old one.
       → Gemini API (systemInstruction SYSTEM_PROMPT, JSON response mode)
@@ -80,7 +80,7 @@ shifts.html / ideas.html (GitHub Pages)
   ignores manifest icons — the `apple-touch-icon` link at 180px is what it uses.
   **All manifest paths must stay relative**: `start_url`/`scope` have to resolve
   to the `/log-it/` Pages subpath, not the domain root. A test guards this.
-- **Categories/sheets:** tip (Track|Susans tabs), meal (Log + Daily Summary),
+- **Categories/sheets:** tip (Track|Dorset Inn|Susans tabs), meal (Log + Daily Summary),
   idea (Ideas + Materials), car (Maintenance Log). Grocery retired in router
   v4.4 (moved to its own app); no routing guardrail replaced it, so a
   grocery-ish entry now goes to the nearest remaining category by design.
@@ -96,7 +96,7 @@ shifts.html / ideas.html (GitHub Pages)
 ## Testing (browser-only, no CLI runner)
 
 - In-page harness: serve repo (`python3 -m http.server 8777`) and open
-  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 240 passed, 0
+  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 266 passed, 0
   failed.** Any change must keep it green; new features add tests there.
   Tests live in `tests.js`; `index.html` injects it only when `?test=1` is
   set, so production never fetches it. The harness reads production globals
@@ -383,6 +383,32 @@ the read key once on the phone, on each of the two pages.
       version the deployment names. Script Properties remain a hand paste —
       no CLI, no API.
 
+20. **Dorset Inn** (router v4.9, 2026-10-09). New job after track season:
+    busser, $10/hr + tips, **tips logged weekly and paid through payroll**,
+    Vermont employer. Choices made with the user: Vermont withholding as an
+    estimate to re-fit on the first stub; tips taxed with the wage; a tips
+    entry with no named day goes to the week just ended; no break deducted.
+    - Afternoon clock-in now routes to Dorset Inn (was Susans). A tips-only
+      entry ("dorset tips 380") is the week's tips. Default with no signal is
+      Dorset Inn. See CLAUDE.md for the full order and why it changed.
+    - Week priced whole, shared out by hours; same $/hr for every shift in a
+      week; re-priced whenever tips arrive or a shift is deleted.
+    - Vermont 2026 single table taken from the Vermont Dept of Taxes
+      publication (GB-1210-2026, via the USDA NFC payroll bulletin) and
+      cross-checked against its weekly chart. Hand-computed test week: 18h,
+      $300 tips → $480 gross → FICA 29.76, Medicare 6.96, federal 17.04,
+      VT 13.55 → **$412.69** take-home, $22.93/hr. Matched first run.
+    - Deployed by Claude via clasp (pull + diff first, push 7 files, verify by
+      pull-back, `update-deployment` to **@20** on the same URL). Production
+      checks: log path alive, shifts read works with no Dorset tab yet. No
+      Dorset row was written by Claude — the first one is the user's, and it
+      creates the tab. Last shift before this was Track on Sep 7, so nothing
+      had been misrouted.
+
+**Next step:** when the first Dorset paystub arrives, re-fit against it the
+way Track was: compare gross, each deduction, and net; adjust `VT_ALLOWANCES`
+and confirm the pay week is Mon–Sun. Then flip Dorset rows from `estimate`.
+
 ## Key facts (don't re-litigate)
 
 - Cost is a NON-issue: ~$0.0005/log. Do not spend effort on token/cost
@@ -478,8 +504,15 @@ penny on both**; tests.js locks it in.
   `<script src>` tags (fixed with `?v=`). Whenever something behaves as though
   your edit did not happen, check what the browser actually fetched before
   debugging the logic.
-- **`clasp` can push and version the live Apps Script**, so "paste this in" is
-  no longer the only route — but Script Properties still have no CLI and no API.
+- **`clasp` can push AND publish the live Apps Script** (`create-version` +
+  `update-deployment` on the existing id) — the user prefers that over paste
+  instructions. Pull and diff against HEAD before every push. Script
+  Properties still have no CLI and no API.
+- **A new tip venue touches more than the router.** v4.9 needed: prompt
+  (category text + venue enum + a weekly-tips line), `routeTip`, a handler,
+  the read (tolerating a missing tab), delete, `CAT_UI` in index.html for the
+  confirmation card, the mock fixture, and the shifts page. The venue chips
+  are now data-driven so the next one needs no markup.
 - `.superpowers/sdd/progress.md` = subagent-driven-dev ledger from Feature #2.
 - Browser pane blocks `file://` — always use the local HTTP server.
 - `textutil -convert txt` extracts the user's RTF code files.
