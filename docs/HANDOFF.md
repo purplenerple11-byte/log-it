@@ -1,520 +1,66 @@
-# Log It — Session Handoff (2026-10-09)
+# Log It — Handoff (2026-10-09)
 
-Read this first. It's the state of the project, how we work, and what's next.
+State of the project and what's next. Rules live in `CLAUDE.md`, recipes in `docs/GUIDE.md`.
+Detail for any line below is in its commit (`git log --oneline`, then `git show <sha>`).
 
-## What this is
+## Now
 
-A single-user, phone-first PWA ("Log It") that turns raw voice/text into
-structured rows across domain Google Sheets. Owner: purplenerple11-byte
-(purplenerple11@gmail.com). Live at `purplenerple11-byte.github.io/log-it/`
-(GitHub Pages, repo `purplenerple11-byte/log-it`, default branch **`Main`** —
-capital M).
+- **Live:** router **v4.9.3** at deployment `AKfycbx4Vyy…` **@23**; front end on Pages from `Main`.
+- **Jobs:** **Dorset Inn** is the current job (busser, $10/hr, weekly tips through payroll, Vermont).
+  **Track is closed** until next season (`TRACK_SEASON_OPEN = false`). Susans is finished.
+- **First real Dorset shift** logged 2026-10-09: 4:00pm → 10:24pm, 6.4h, $59.10 est. take-home,
+  tips pending. It created the `Dorset Inn` tab.
+- **Tests:** browser suite **287 passed, 0 failed**; `node tools/gas-sim.js` 15/15.
+- **The user has set:** `READ_TOKEN` and `GEMINI_API_KEY` in Script Properties, the Ideas `Status`
+  and Materials `Got it` headers, and the read key on the phone.
 
-## Architecture
+## Next
 
-```
-PWA (index.html, GitHub Pages)
-  → fetch POST text/plain (avoids CORS preflight)
-    → Google Apps Script Web App  ("Execute as: Me", access: Anyone)
-       source of truth in repo: server/routerWebApp.gs (v4.9) +
-         tipRouting.js + trackPay.js + readApi.js + sheetWrite.js +
-         dorsetPay.js, all in the SAME Apps Script project ("Log It -
-         Router"), whose file names are Code / tipRouter / trackPay / readApi /
-         sheetWrite / dorsetPay — NOT the repo's names. One global scope.
-       ⚠ Claude can push with `clasp`, but push ≠ publish: the /exec URL
-         serves whatever version the deployment names. Currently @20.
-         Publishing = bump that deployment, NOT "New deployment", which mints
-         a fresh /exec URL while CFG_DEFAULTS still points at the old one.
-      → Gemini API (systemInstruction SYSTEM_PROMPT, JSON response mode)
-         model chain: gemini-3.1-flash-lite → gemini-3.5-flash (1 attempt each)
-      → SpreadsheetApp writes to per-category sheets
-    ← {success, category, sub_route, message}
-  ← enriched confirmation shown in confirm card
+1. **Re-fit Dorset withholding to the first paystub** (GUIDE → "Re-fit withholding"): check
+   `VT_ALLOWANCES`, the pay-week boundary, and that tips appear on the stub. Until then every
+   Dorset figure is marked as an estimate.
+2. **Reopen Track next season** (late June): flip `TRACK_SEASON_OPEN`, update its test, deploy.
+3. **Offline queue** (deferred on purpose): a service worker that caches the shell *and* queues
+   failed logs. It interacts with `submitWithRetry` and needs its own spec. A shell-only cache is not
+   worth it — the app would open offline and then fail to submit.
+4. Optional: the 16 pre-v4.5 Track rows are recomputed at read time for display only;
+   `recomputeWeek` could write them back.
+5. Optional: `?mock=` (the router-failure faker) still lives inline in `index.html` (~15 lines,
+   inert without the param). Extracting it is surgery on the logging path, not a move.
 
-shifts.html / ideas.html (GitHub Pages)
-  → same POST text/plain, op: read | patch | delete, gated by READ_TOKEN
-    → reads answer BEFORE the script lock; patch/delete take it
-```
+## How we work (the user's preferences)
 
-- **Client** (`index.html`, ~1240 lines, no build/npm, plus `daily.js` for the
-  daily-line content + pure selectors; tests live in `tests.js`, loaded only
-  under `?test=1`):
-  - Submission: `processEntry` → `submitWithRetry` (3 attempts, backoff 1s/3s)
-    → `callRouter` (30s `AbortController` timeout, typed `SubmitError`:
-    timeout/network/http/server; `isTransient` decides retry). Input held in
-    `pendingEntry`, cleared ONLY on success; failures show `#fail-card`
-    (Retry/Copy/Dismiss).
-  - **Invariant (corrected in v4.6):** duplicate safety comes from the
-    `request_id`, NOT from timing. The old claim that a ~5-9s server vs a 15s
-    client timeout made retries safe was wrong — a 16.3s run on 2026-07-27
-    wrote its row after the client had given up and retried, producing two
-    rows; history shows runs of 268s/107s/82s. Now the client sends a
-    request_id constant across retries and the Retry button, and doPost holds
-    the script lock across the whole request while checking a CacheService
-    entry on that id. Lock must span the write, not just the cache read.
-    Only successes are cached. Timeout raised to 30s. Still don't add
-    server-side retries/sleeps.
-  - Today view: successful logs mirrored to `localStorage` key `today_logs`
-    (`{ts,day,category,sub_route,message,text}`); pruned to local day on write
-    (= midnight reset, no timer). Tiny 15px orange squares under the
-    Voice/Type toggle; tap expands to bullet rows (via `CAT_UI` + `catKey`),
-    tap collapses. Empty → hidden. No hint text (removed deliberately).
-  - Expand animation: the squares and the cards are the *same* elements —
-    `.today-box` morphs in place. Because collapse/expand is a **layout**
-    change (wrapped squares → stacked cards), transitions can't interpolate
-    position: the boxes teleport and only size animates. The `today-fan`
-    keyframe supplies the travel, starting each card lifted toward the row so
-    they fan downward. Stagger is index-driven — `renderLogBox` emits
-    `style="--i:N"`, CSS reads it for both delay and start offset. Don't go
-    back to `nth-child`: it capped at `n+4`, so the fan flattened after three
-    logs. `--fan-step` clamps at 6 to bound a busy day (~330ms total).
-  - Mode toggle morph: `text-mode` class on `#app`; `#mic-btn` morphs into the
-    text box (320ms cubic-bezier(.4,0,.2,1)); real `#text-input` fades in over
-    the shell; headings "Hold to log" / "Type to log".
-  - Layout is top-anchored (`#app` flex-start, `padding:8vh 24px 40px`) so the
-    mic never moves when the Today list expands.
-- **PWA install** (`manifest.json`, `icons/`): standalone, portrait, dark
-  splash. Icon = dark `#121316` dot on solid `#cc785c` (regenerate with
-  `python3 tools/make-icons.py`, stdlib only). One image serves "any maskable"
-  because the field is solid and the dot sits inside the 80% safe zone. iOS
-  ignores manifest icons — the `apple-touch-icon` link at 180px is what it uses.
-  **All manifest paths must stay relative**: `start_url`/`scope` have to resolve
-  to the `/log-it/` Pages subpath, not the domain root. A test guards this.
-- **Categories/sheets:** tip (Track|Dorset Inn|Susans tabs), meal (Log + Daily Summary),
-  idea (Ideas + Materials), car (Maintenance Log). Grocery retired in router
-  v4.4 (moved to its own app); no routing guardrail replaced it, so a
-  grocery-ish entry now goes to the nearest remaining category by design.
-  Sheet IDs and the Web App URL are **baked into
-  `CFG_DEFAULTS` in `index.html`**; the ⚙ settings panel (localStorage) still
-  overrides them per-field, and `LS.get` falls back to the default when a key
-  is unset — so a cache clear no longer means retyping six fields on a phone.
-  Sent per-request; Gemini key lives in Script Properties.
-  ⚠ The repo is public, so those six values are readable. Accepted knowingly
-  (see session history #11) — the exposure is unsolicited writes to the
-  sheets, not key theft. Don't "fix" this by ripping the defaults out.
+- Brainstorm one question at a time with lettered options and a recommendation → spec in
+  `docs/specs/` → build test-first → verify in the browser and live → ship.
+- Interactive mockups before UI changes work well; the user gives concrete tweak feedback, often as
+  phone screenshots.
+- Deploy rather than hand over paste steps (Apps Script via the deploy script). Pushing `Main` is a
+  live deploy — say what's going out. Never delete remote branches unless the user names them.
+- Earlier sessions: the user wanted Sonnet subagents to implement and test, Haiku for cheap mockups,
+  with the controller designing, reviewing and verifying in-browser.
+- Dark, minimal, orange accent. Single user, so affordance hints can go.
+- Asks for numbers to be right and for "est." to mean something. Says so plainly when a screen is
+  confusing — treat "I can't tell X" as a bug report.
 
-## Testing (browser-only, no CLI runner)
+## Changelog
 
-- In-page harness: serve repo (`python3 -m http.server 8777`) and open
-  `index.html?test=1` → renders PASS/FAIL + footer. **Currently 266 passed, 0
-  failed.** Any change must keep it green; new features add tests there.
-  Tests live in `tests.js`; `index.html` injects it only when `?test=1` is
-  set, so production never fetches it. The harness reads production globals
-  (one-way — production must never reference test symbols).
-- `?mock=<success|server|http4xx|http5xx|network|timeout>` fakes the router in
-  the real UI (set any non-empty router URL in localStorage first);
-  `&to=<ms>` shortens the 30s timeout. Both dev switches are inert without
-  URL params.
-- Drive it with the Claude Browser pane; read the footer via
-  `document.querySelector('pre').textContent` filtering for "passed".
-
-## How we work (user's established preferences)
-
-- Superpowers flow: brainstorm (one question at a time, options A/B/C) → spec
-  in `docs/specs/` → plan in `docs/plans/` → implement → verify → merge.
-- **User wants Sonnet subagents to implement and test**; Haiku for cheap
-  mockups; controller (Opus) designs, reviews, and verifies in-browser.
-  Interactive HTML mockups (inline widget) before committing to UI designs
-  worked very well — user gives concrete tweak feedback.
-- Merge to `Main` + push only after the user says so (push = live deploy via
-  Pages). Never delete remote branches without the user naming it.
-- Aesthetic: minimal, dark (#121316), orange accent `--action:#cc785c`; user
-  is the only user — affordance hints can be dropped.
-
-## Session history (all shipped & live)
-
-1. Bulletproof submission (retry state machine, fail card, 15s timeout).
-2. Today read-back view (local mirror; squares→bullets).
-3. Boxes moved below the toggle; hint text removed.
-4. Router v4.2: retry budgets aligned (1 attempt/model, no sleeps — was up to
-   18 Gemini calls + duplicate-row risk) and fixed the confirmed `+ +` NaN bug
-   that replaced the AM/PM disambiguation rule in SYSTEM_PROMPT with literal
-   "NaN". 4 regression tests fetch and check the .gs in the suite. **User has
-   deployed v4.2 to Apps Script.**
-5. Voice⇄text morph.
-6. `.gitignore` for the personal files (.rtf/.pdf/.txt/.DS_Store). Verified
-   none had ever been committed on any branch — prevention only, no history
-   rewrite. Merged to `Main`.
-7. PWA manifest + app icon. Icon is a dark dot on a solid `--action` field;
-   solid field means Android's maskable crop can't clip it, so one image
-   serves "any maskable". Regenerate with `python3 tools/make-icons.py`
-   (stdlib only). iOS ignores manifest icons — the `apple-touch-icon` link
-   at 180px is what it uses. **User confirmed install prompt fires on
-   device.**
-8. Test harness split into `tests.js` (index.html 56.8KB → 40.3KB, -29%).
-9. **v4.2 validated live by the user** ("worked 2-4 at susans" → Susans,
-   2:00pm-4:00pm, $40). The NaN fix is confirmed in production.
-10. Daily line: the static hint is now a rotating mantra/prompt/quote
-    (`daily.js`). Two local-time windows split at 5pm ('am'/'pm' tags;
-    untagged lines float into both); pick = hash of date+window, so it
-    holds still within a window and rolls at 5pm and midnight. Pure
-    `lineFor(date, lines)`; no storage, no timer. `#hint` lost
-    `white-space: nowrap` so quotes wrap.
-11. **Config baked in** (`CFG_DEFAULTS`): the Web App URL + five sheet IDs are
-    hardcoded, with `LS.get` falling back to them when localStorage is empty.
-    Motivation: a cache clear meant retyping six long IDs on a phone. The ⚙
-    panel still wins when set, so it stays a live override; saving a field
-    blank now resets to the baked-in value rather than emptying it. **Trade-off
-    accepted deliberately by the user after being told the repo is public** —
-    anyone reading it can POST rows into these sheets. The Gemini key is
-    unaffected (Script Properties). Live; user verified a real log on device.
-12. Today-view fan animation (see the Today view notes above). Index-driven
-    stagger replaced the `nth-child` delays, which also fixed the fan
-    flattening after the 3rd log. Live.
-13. **Deterministic tip routing** (`server/tipRouting.js`, router v4.3). Three
-    real logs of "9:18 in, 6:50 out, 350 dollars in tips" landed in Susans;
-    the same entry with "$350" landed in Track. Cause: the prompt gave Gemini
-    two tip schemas and only the Susans one had `clock_in`/`clock_out`, so an
-    in/out pair fit that shape and routed there regardless of the written
-    rules — and with no `tips` field on that schema, the $350 was silently
-    dropped and an hours x $20 payroll row invented. Fix: one tip schema
-    carrying every field, Gemini emits facts only (24h `HH:MM` times, plus
-    `venue` only when a name is spoken), and `routeTip()` picks the tab in
-    code — explicit venue, then tips (Track-only), then clock-in before noon,
-    else Track. `shiftHours()` also derives the length from the times instead
-    of trusting the model's arithmetic. 18 new tests; verified red against the
-    old behavior before going green. **Shipped and confirmed live by the user**
-    on 2026-07-23, after pasting both files into the Log It - Router project
-    and publishing a new version of the existing deployment.
-14. **Grocery retired** (router v4.4). Groceries moved to a dedicated app, so
-    the category came out end to end: prompt line, schema, doPost case,
-    SHEET_IDS slot, handleGrocery/insertGroceryItem (~80 lines), plus the
-    client's ⚙ field, sheet_grocery default, payload key, and 🛒 CAT_UI entry.
-    A guard test keeps it from creeping back. Stale grocery rows in a Today
-    list degrade to a bullet via the existing CAT_UI fallback. **No routing
-    guardrail replaced it by the user's choice** — "out of milk" now lands in
-    the nearest remaining category. The orphaned grocery Sheet was left alone.
-15. **Track pay & withholding** (`server/trackPay.js`, router v4.5). Track rows
-    now carry Gross Wage, Est. Net Wage, Total Take-Home, and a true Eff. $/hr
-    in columns F-I (previously "Rate" was only tips÷hours, saying nothing about
-    the paycheck). Model reverse-engineered from two real paystubs — see the
-    Track pay model section below. 22 new tests. Two findings worth keeping:
-    the naive additivity test **telescopes and is nearly tautological**, so it
-    was backed up with a ragged-12-shift drift test and an explicit
-    "not taxed in isolation" test that both genuinely fail against wrong
-    models; and the harness's source-inspecting tests were reading **cached**
-    .gs files (it reported the v4.5 router as v4.4), now fixed with a per-run
-    cache-buster in `fetchText`/`fetchJson`. **Needs the user to add F-I
-    headers to the Track tab, paste `trackPay.gs`, and republish.**
-
-16. **Duplicate-write fix** (router v4.6). Logging one shift on 2026-07-27
-    produced two rows. Cause was not the sheet: doPost ran 16.343s against the
-    client's 15s timeout, the client aborted and retried, and the original
-    finished and wrote anyway. Proof it was two real executions rather than a
-    render glitch — the second row's net was 131.70, i.e. the incremental
-    figure you only get if the week already contained the first row's 9.27h.
-    Fix: client-generated request_id, stable across automatic retries AND the
-    Retry button; doPost holds the script lock for the whole request and
-    returns a cached response for a repeat id without writing. Simulated the
-    exact race: 2 writes before, 1 write after. Also raised the timeout to 30s
-    and added formatTrackRow, because a row appended past the Sheets Table's
-    range rendered every number as a 1900-era date. 8 new tests, each verified
-    to fail against the broken behaviour first. **This corrected a documented
-    invariant that was simply false** — see the client section above.
-    Cleanup done by hand: duplicate row deleted; the surviving row was also
-    re-dated to 7/26 and its F-I recomputed, since it was logged Monday for a
-    Sunday shift and had been taxed as a fresh pay week ($23.37 too high).
-17. **Daily line: fixed real repeats (`fix/daily-line-rotation`).** Item 10's
-    `pool[dailyHash(key) % pool.length]` was sampling *with replacement* —
-    deterministic and scattered on consecutive days, but nothing stopped a
-    line reappearing days later. Measured on the pre-fix content (99 lines,
-    am pool 76 / pm pool 75, over 2026): **38 repeats within 7 days** on the
-    am pool (37 on pm), one line shown 10x/year, one pm line never shown at
-    all. Root cause was the algorithm, not the content.
-    - **Fix:** replaced `lineFor` with a seeded per-cycle Fisher-Yates
-      rotation. `dailyHash` is kept exactly as-is but now seeds the shuffle
-      (`seededRandom`, mulberry32) instead of picking the index directly.
-      Within one cycle (`pool.length` days) every line shows exactly once, so
-      it cannot repeat until the whole pool has been used. New helpers:
-      `dayNumber` (epoch day for the local calendar date — stable across
-      timezones/DST), `minGapFor` (gap requirement scaling with pool size,
-      capped at 21), `rawOrder`/`orderFor` (the shuffle + boundary repair),
-      `scheduledPick`.
-    - **Boundary repair is load-bearing.** A plain per-cycle shuffle still
-      lets a line land late in cycle N and early in cycle N+1 — measured
-      minimum gap without the repair was **2 days**. `orderFor` swaps any of
-      cycle N+1's first `minGapFor(n)` slots that collide with cycle N's last
-      `minGapFor(n)` slots. With it, minimum gap is **22 days** on the real
-      pools (180+ each).
-    - **Same-day am/pm collision fix.** Untagged lines live in both pools, so
-      the am and pm pick could coincidentally be the same line on the same
-      day. Filtering the untagged line out of one pool was rejected — it
-      would change pool length and shift the whole rotation. Instead, on a
-      collision the pm pick is nudged to a different slot. The nudge must be
-      **half the pool away, not +1**: +1 is literally tomorrow's regularly
-      scheduled slot (each day advances the cycle position by exactly 1), so
-      nudging by 1 showed the same line again the very next day — a
-      self-inflicted back-to-back repeat, caught by the 12-year simulation
-      (15 same-day-adjacent repeats over 12 years) before it shipped.
-    - **Content grown to lengthen the rotation.** Untagged 52→127, am-tagged
-      24→64, pm-tagged 23→63 (+140 lines net, all unattributed — no `author`
-      field on any new entry, since two existing attributed quotes had
-      already turned out to be misattributed and weren't worth the risk at
-      scale). am pool 76→191, pm pool 75→190. Rotation length is the pool
-      size in days, so this took the no-repeat window from ~2.5 months to
-      **~6.3 months**.
-    - **Measured after the fix**, 12-year simulation over the real content:
-      minimum gap 22 days, 0 repeats within 7 or 14 days, 0 back-to-back
-      repeats, 0 same-day am/pm collisions — for both pools.
-    - `tests.js`: retired the two tolerance-based guards (`repeats <= 12` and
-      `worstRepeats <= 15`) that had quietly encoded the bug as acceptable
-      the old suite passed while lines were actually repeating 38x/year.
-      Added rotation-guarantee, min-gap, same-day, and `dayNumber` tests;
-      tightened the 5-line-pool and pool-size tests. Verified each new test
-      fails against the old hash-mod `lineFor` before the fix (TDD red, then
-      green). Test count: 108 → 125.
-    - `lineFor(date, lines)` kept its exact signature — `index.html` was not
-      touched.
-
-18. **Shift date extraction** (router v4.7). The pay week used to come from
-    `now()`, so a shift logged after the fact landed in the wrong week and was
-    taxed as a fresh one. It bit twice in ten days: a Sunday 7/26 shift logged
-    Monday, and a Sunday 8/2 shift logged Wednesday 8/5 — each ~$23 too high.
-    Gemini now fills `shift_date` when the entry names a day ("yesterday",
-    "Sunday", "Aug 2"), the current date is appended to SYSTEM_PROMPT per
-    request so relative dates resolve, and the row is stamped with the shift
-    date so `sumTrackHours` buckets it right. `resolveShiftDate` (tipRouting)
-    is almost entirely guard: exact `YYYY-MM-DD` only, must be a real calendar
-    date, no future dates, nothing older than 45 days — otherwise fall back to
-    today and log why. Verified a naive resolver accepts all six bad inputs
-    (future, year-old, Feb 30, wrong format) while this one accepts none.
-    Back-dated shifts are echoed on the card ("logged for Sun Aug 2") so a
-    misread day is visible rather than silent. 12 new tests.
-    Also: the simulated flow for the real 8/2 entry reproduced the row that had
-    been hand-entered, to the penny — 147.36 / 111.86 / 353.86 / 38.59.
-
-19. **Read/interact front end** (router v4.8, branch `feat/read-front-end`).
-    Two new pages — `shifts.html` (earnings trends + a filterable, tappable
-    shift log) and `ideas.html` (browse, Active/Done/Archived, edit next step,
-    tick off materials and record their price). Spec:
-    `docs/specs/2026-08-16-read-front-end-design.md`.
-    - **Reading the live sheets first killed three design assumptions.**
-      Materials columns E/F are `Price`/`Notes`, hand-maintained — not the
-      spare columns `handleIdea` writes `''` into. 16 of 33 Track rows predate
-      v4.5 and carry no pay at all. One Materials row was hand-added with a
-      blank timestamp, which is the identity the patch path needs. Every one of
-      those changed the design. **Read the sheet before designing against it.**
-    - `doPost` dispatches on `op`; reads answer before any lock, the token
-      gates read/patch/delete only, and `tokenMatches` fails closed when
-      `READ_TOKEN` is unset. See the invariants in CLAUDE.md.
-    - `recomputeWeek` reproduces the stored week of 2026-07-20 **to the penny**
-      (145.11/132.78/482.78/53.46 and the three rows after), which is what
-      justifies using it to fill in the 16 unpriced rows for display.
-    - Delete re-verifies the row against what the page displayed, then repairs
-      the pay week — automating the 2026-07-27 hand cleanup.
-    - **Two process failures worth remembering.** (a) The suite reported
-      `137 passed, 0 failed` against a cached `tests.js` holding 22 new tests;
-      the `?test=1` script injector now cache-busts like `fetchText` always
-      did. (b) Three tests asserting only "it throws" were vacuously green,
-      because an undefined function throws `ReferenceError` too.
-    - **A bug 198 passing tests had nothing to say about:** the chart stacked
-      Susans' gross on Track's net under a "Net wage" legend. Found by looking
-      at the rendered page. It plots one venue at a time now.
-    - `?mock=1` on either page runs the real sheet rows through the real server
-      modules — no deploy, no token. That is how both pages were verified.
-    - **214 passed, 0 failed.** Not pushed. **Needs the user's setup steps
-      below before it does anything against the live sheets.**
-
-## Setup the user must do for v4.8
-
-1. Ideas tab: add a **`Status`** header in column H. Leave every cell blank —
-   blank reads as Active by design, so nothing is backfilled.
-2. Materials tab: add a **`Got it`** header in column G.
-3. Apps Script → Project Settings → Script Properties: add
-   **`READ_TOKEN`** = a long random string. Save it somewhere; clearing phone
-   storage means re-entering it. Until it is set, every read is denied (that
-   is deliberate — it fails closed).
-4. ~~Paste the server files.~~ **Already done, 2026-08-17** — Claude pushed
-   them with `clasp push`, and a pull-back diff confirms all five files match
-   the repo byte for byte. The live `Code` reads
-   `v4.8 — Read + Write-Back Ops`.
-   **Published 2026-08-17**: deployment `AKfycbx4Vyy…` now serves **@19**,
-   same `/exec` URL. Front end merged to `Main` and live on Pages.
-5. Open the Shifts page on the phone and paste the token when asked.
-
-**All of the above is done.** The only remaining user step is #5 — entering
-the read key once on the phone, on each of the two pages.
-
-19. **Read/interact front end** (router v4.8, `feat/read-front-end`). Two read
-    surfaces over the same sheets the logger writes to, plus a narrow
-    write-back path. Spec: `docs/specs/2026-08-16-read-front-end-design.md`.
-    - `doPost` dispatches on `op`; absent/`log` is the old path byte for byte.
-      Reads answer **before** the script lock, `patch`/`delete` take it. The
-      token gates read/patch/delete only and **fails closed when unset**.
-    - `shifts.html` (trends + filterable log) and `ideas.html`
-      (Active/Done/Archived, next step, materials with prices). Cache-first
-      render, because Apps Script cold starts here have hit 268s.
-    - 82 new tests (137 → 219).
-    - **Three bugs the test suite could not have caught**, each found by
-      looking at the running thing:
-      1. The `?test=1` injector loaded `tests.js` through a plain
-         `<script src>` with no cache-buster, so an edited suite could be
-         served stale. It reported `137 passed` against a file holding 22 new
-         tests. `fetchText` had guarded this for *fetched* files only.
-      2. The chart stacked Susans' gross on Track's net under a legend reading
-         "Net wage" — the exact post-tax/pre-tax mix the totals were built to
-         avoid, kept out of the numbers and reintroduced in the picture.
-         Caught from a screenshot while 198 tests were green.
-      3. `dataClient` sent an empty sheet id on any device that had never
-         opened the ⚙ panel, because `LS.get` falls back to `CFG_DEFAULTS`
-         **without writing to localStorage**. Every fresh device, including the
-         phone. `?mock=1` structurally could not catch it — the mock never
-         sends a sheet id. Found on the first real request.
-    - Verified against production, not only the suite: 47 shifts (34 Track /
-      13 Susans), 16 pre-v4.5 rows recomputed and 18 read from the sheet,
-      Aug 2 returning 353.86 at 38.59/hr, the 7/15 duplicate flagged with its
-      original untouched, 25 ideas reading Active from blank cells, the
-      untimestamped immersion-blender material surfacing rather than being
-      dropped, all five patch guards refusing, and a material round-tripped
-      true→false leaving the sheet as it started.
-    - **Shipped after the first deploy** (all live): value labels on the week
-      bars; numeric axis labels and leading-empty-week trimming; tap a week to
-      drill into per-day blocks, each keeping the tips-on-wage split and
-      spelling out both halves ("Sat 619 + 140"); bigger, higher-contrast idea
-      cards with ~44px material rows; drag-to-reorder ideas, stored on the
-      device only (localStorage `idea_order`, no Order column in the sheet).
-    - **Asset versioning.** Every static script/stylesheet on the read pages
-      carries `?v=<token>`; a test asserts it and that one page never mixes
-      tokens. **Bump the token whenever a `.js`/`.css` on those pages changes.**
-      `index.html` still loads `daily.js` unversioned — same risk, left alone
-      to avoid touching the logging path.
-    - **Claude can now push to Apps Script** via `clasp` (3.3.0, authenticated).
-      Push ≠ publish: a push moves HEAD only, the `/exec` URL keeps serving the
-      version the deployment names. Script Properties remain a hand paste —
-      no CLI, no API.
-
-20. **Dorset Inn** (router v4.9, 2026-10-09). New job after track season:
-    busser, $10/hr + tips, **tips logged weekly and paid through payroll**,
-    Vermont employer. Choices made with the user: Vermont withholding as an
-    estimate to re-fit on the first stub; tips taxed with the wage; a tips
-    entry with no named day goes to the week just ended; no break deducted.
-    - Afternoon clock-in now routes to Dorset Inn (was Susans). A tips-only
-      entry ("dorset tips 380") is the week's tips. Default with no signal is
-      Dorset Inn. See CLAUDE.md for the full order and why it changed.
-    - Week priced whole, shared out by hours; same $/hr for every shift in a
-      week; re-priced whenever tips arrive or a shift is deleted.
-    - Vermont 2026 single table taken from the Vermont Dept of Taxes
-      publication (GB-1210-2026, via the USDA NFC payroll bulletin) and
-      cross-checked against its weekly chart. Hand-computed test week: 18h,
-      $300 tips → $480 gross → FICA 29.76, Medicare 6.96, federal 17.04,
-      VT 13.55 → **$412.69** take-home, $22.93/hr. Matched first run.
-    - Deployed by Claude via clasp (pull + diff first, push 7 files, verify by
-      pull-back, `update-deployment` to **@20** on the same URL). Production
-      checks: log path alive, shifts read works with no Dorset tab yet. No
-      Dorset row was written by Claude — the first one is the user's, and it
-      creates the tab. Last shift before this was Track on Sep 7, so nothing
-      had been misrouted.
-
-**Next step:** when the first Dorset paystub arrives, re-fit against it the
-way Track was: compare gross, each deduction, and net; adjust `VT_ALLOWANCES`
-and confirm the pay week is Mon–Sun. Then flip Dorset rows from `estimate`.
-
-## Key facts (don't re-litigate)
-
-- Cost is a NON-issue: ~$0.0005/log. Do not spend effort on token/cost
-  optimization. Latency + correctness only.
-- Model names `gemini-3.1-flash-lite` / `gemini-3.5-flash` are real (post
-  Jan-2026). Free-tier limits: 3.1-flash-lite 15 RPM / 500 RPD; 3.5-flash
-  **20 RPD** (precious — fallback fires once per log max by design).
-- Legacy per-domain Apps Script files (`Auto TIps.rtf`, `Car Maitnance.rtf`,
-  `Food Log.rtf`, `Idea Capture.rtf` on the repo folder, untracked) are
-  form-triggered predecessors, superseded by the router for PWA use. Possible
-  schema drift: old Food Log wrote E=Calories/F=Macros; router writes
-  E=creatine/F=fish_oil — user hasn't confirmed sheet headers.
-- End-to-end validation the user can run: log "worked 2-4 at susans" → should
-  route Susans 2:00pm-4:00pm, $40 (proves NaN fix live). For tip routing, log
-  "9:18 in, 6:50 out, 350 dollars in tips" → Track, 9.03h, $350, $38.76/hr.
-- Susans tab layout confirmed by the user: `A:Timestamp | B:Clock In |
-  C:Clock Out | D:Hours | E:Pay @ $20/hr | F:Notes` — matches what the router
-  writes. **Track tab** is `A:Timestamp | B:Hours | C:Tips | D:Tips-per-hr |
-  E:Notes` plus, as of v4.5, `F:Gross Wage | G:Est. Net Wage |
-  H:Total Take-Home | I:Eff. $/hr` (the user must add those four headers).
-  The legacy script wrote a Date in column B, so if any of its rows survive,
-  reading hours from B would poison the weekly pay math — `sumTrackHours`
-  guards with a numeric check and a test proves it.
-- First request after publishing a new version, or after a long idle, can be
-  slow. Observed 2026-07-23: ~4 failed attempts, zero Gemini calls, zero rows
-  written. **This note used to warn that "if a slow first call ever DOES reach
-  the sheet, the retries could double-write" — that is exactly what happened
-  four days later on 2026-07-27** (a 16.3s run wrote its row after the client
-  gave up). It was flagged and not acted on; don't repeat that. It is fixed
-  properly now by the request_id dedupe (v4.6), so slow runs are no longer a
-  correctness problem, only a latency one.
-- The 0.5h Track break deduction is pure script (`BREAK_DEDUCTION_HRS`), not
-  AI, and the prompt says nothing about breaks — so there is no double
-  deduction. The legacy script's "only if over 5 hours" rule is gone; the
-  user chose to keep the unconditional deduction.
-
-## Track pay model (v4.5) — calibrated, re-fit when things change
-
-Reverse-engineered from two real paystubs (weeks ending 7/5 and 7/19/2026,
-weekly pay period, NY). Reproduces gross, every deduction, and net **to the
-penny on both**; tests.js locks it in.
-
-| Component | Rate |
+| # | Shipped |
 |---|---|
-| Gross | hours x `TRACK_WAGE_RATE` = $16.07 (hours already net of the unpaid 0.5h break) |
-| FICA / Medicare / NY-PFL | 6.2% / 1.45% / 0.4327% of gross |
-| NY Disability | **$0.60 flat per week**, not a rate |
-| Federal | real 2026 percentage method: Single, W-4 step 2 unchecked, $16,100 std deduction, 10% to $12,400 then 12% to $50,400, annualized /52 |
-| NY State | **line fitted to the two stubs**: `0.054045 x gross - 10.874`, floored at 0 |
-
-- **NY is calibration, not derivation.** NY's real tables are piecewise with the
-  tax-table benefit recapture built in; the published brackets miss by
-  $0.22-$0.35/week. Re-fit on a raise, filing-status change, or new tax year.
-- **A shift's net is incremental within the Mon-Sun pay week** (WeekEnd is a
-  Sunday, paid the following Thursday). Withholding is progressive, so taxing a
-  shift alone understates it ~$20/shift. Consequence: `handleTip` sums the
-  week's existing Track hours **before** appending, and the same hours net
-  *less* later in the week — that's correct, not a bug.
-- Rounding each deduction to cents (as the stubs do) is what makes the
-  per-shift nets sum exactly to the week; a drift test on 12 ragged shift
-  lengths catches losing that.
-- Tips are treated as untaxed cash — correct per the stubs, where gross is
-  exactly `units x rate` with no tip income.
-- **Estimate for planning, not a tax document.**
-
-## Next steps (prioritized)
-
-1. (Optional) `?mock=` is still in `index.html` (~15 lines, wired into
-   `callRouter` at ~line 948, inert without the URL param). Left there
-   during the harness split because extracting it is surgery, not a move.
-2. **Offline queue** (raised while scoping the manifest, deliberately deferred):
-   a service worker caching the shell + queueing failed logs to retry when back
-   online. Real value if logging where reception is bad, but it interacts with
-   the existing `submitWithRetry` state machine and needs its own spec. Note a
-   shell-only cache is *not* worth it alone — the app would open offline and
-   then fail to submit anyway.
-3. (Deferred minors, fine to ignore: JSON-parse block duplicated in
-   readTodayLogs/recordTodayLog; `deps.now||Date.now()` epoch-0; keydown
-   null-guard.)
-
-## Gotchas
-
-- **A green suite is not a working page.** Four real defects this session were
-  invisible to 240 passing tests and were each caught by looking: a chart
-  stacking pre-tax on post-tax under one legend; an empty sheet id on any
-  device that never opened the ⚙ panel (the mock never sends one, so that path
-  does not run under `?mock=1`); a drag that re-baselined on a no-op insert and
-  snapped back every frame; and a cached `.js` blanking a page outright.
-  Screenshot the thing, and hit the live endpoint, before believing it works.
-- **Stale cached assets are the recurring failure mode here.** It has now bitten
-  three times in three different places: `fetchText` (fixed with a per-run
-  buster), the `?test=1` `<script>` injector (fixed), and the read pages' own
-  `<script src>` tags (fixed with `?v=`). Whenever something behaves as though
-  your edit did not happen, check what the browser actually fetched before
-  debugging the logic.
-- **`clasp` can push AND publish the live Apps Script** (`create-version` +
-  `update-deployment` on the existing id) — the user prefers that over paste
-  instructions. Pull and diff against HEAD before every push. Script
-  Properties still have no CLI and no API.
-- **A new tip venue touches more than the router.** v4.9 needed: prompt
-  (category text + venue enum + a weekly-tips line), `routeTip`, a handler,
-  the read (tolerating a missing tab), delete, `CAT_UI` in index.html for the
-  confirmation card, the mock fixture, and the shifts page. The venue chips
-  are now data-driven so the next one needs no markup.
-- `.superpowers/sdd/progress.md` = subagent-driven-dev ledger from Feature #2.
-- Browser pane blocks `file://` — always use the local HTTP server.
-- `textutil -convert txt` extracts the user's RTF code files.
-- The user's Apps Script editor is the runtime; repo file is source of truth
-  only by convention — remind them to paste+redeploy after any server change.
+| 1 | Bulletproof submission: retry state machine, fail card |
+| 2–3 | Today read-back view (local mirror, squares → cards), moved under the toggle |
+| 4 | Router v4.2: one Gemini attempt per model, no sleeps; fixed the `+ +` → "NaN" prompt bug |
+| 5 | Voice ⇄ text morph |
+| 6 | `.gitignore` for personal files (verified none were ever committed) |
+| 7 | PWA manifest + icon (relative paths for the `/log-it/` subpath) |
+| 8 | Test harness split into `tests.js` |
+| 10, 17 | Daily line, then a seeded no-repeat rotation (min gap 22 days; ~6-month cycle) |
+| 11 | Config baked into `CFG_DEFAULTS` (public repo, accepted by the user) |
+| 12 | Today-view fan animation, index-driven stagger |
+| 13 | v4.3: tip routing moved from the prompt into code (`routeTip`) |
+| 14 | v4.4: grocery category retired (moved to its own app) |
+| 15 | v4.5: Track pay + withholding, fitted to two paystubs to the penny |
+| 16 | v4.6: duplicate-write fix — request id + lock across the whole request |
+| 18 | v4.7: shifts priced by the day they happened (`shift_date`) |
+| 19 | v4.8: shifts + ideas pages, read/patch/delete ops behind `READ_TOKEN`; drill-down chart, drag-to-reorder ideas, in-app dialogs, `?v=` asset versioning |
+| 20 | v4.9: Dorset Inn — weekly-priced pay, Vermont withholding, tips taxed via payroll |
+| 21 | v4.9.1–4.9.3: Track closed for the season (`seasonGate`); evening clock-out fix; Sheets time values read as clock times; batched sheet writes; deploy script; server simulator; this docs restructure |
