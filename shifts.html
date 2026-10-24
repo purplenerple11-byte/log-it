@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#121316">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <link rel="icon" type="image/png" href="icons/icon-192.png">
-  <link rel="stylesheet" href="theme.css?v=20261009a">
+  <link rel="stylesheet" href="theme.css?v=20261024a">
   <title>Shifts — Log It</title>
 </head>
 <body>
@@ -58,9 +58,9 @@
   <div class="skeleton" style="width:70%;margin:0 auto"></div>
 </div>
 
-<script src="shiftStats.js?v=20261009a"></script>
-<script src="dataClient.js?v=20261009a"></script>
-<script src="ui.js?v=20261009a"></script>
+<script src="shiftStats.js?v=20261024a"></script>
+<script src="dataClient.js?v=20261024a"></script>
+<script src="ui.js?v=20261024a"></script>
 <script>
 const MOCK = new URLSearchParams(location.search).get('mock') === '1';
 
@@ -255,11 +255,14 @@ function renderLog(shown) {
     const isOpen = openRow === i;
     const amt = s.venue === 'Susans' ? s.grossPay : (s.pay ? s.pay.takeHome : null);
     const rate = s.venue === 'Susans' ? 20 : (s.pay ? s.pay.effHourly : null);
-    const est = s.pay && s.pay.source !== 'sheet';
+    // "est." only where the figure is incomplete or reconstructed: rows that
+    // predate the pay columns, and Dorset periods whose tips aren't logged yet.
+    // Dorset withholding itself is fitted to a stub, so it isn't an estimate.
+    const est = !!s.pay && (s.pay.source === 'computed' || s.pay.tipsLogged === false);
 
     let meta = s.venue + ' · ' + s.hours + 'h';
-    // Dorset tips arrive weekly: a shift shows its share of the week's tips, or
-    // says the week's tips have not been logged yet.
+    // Dorset tips are pooled per pay period: a shift shows its share of them, or
+    // says the period's tips have not been logged yet.
     if (s.pay && s.pay.tipsLogged === false) meta += ' · tips pending';
     else if (s.tips) meta += ' · ' + money0(s.tips) + (s.venue === 'Dorset Inn' ? ' tips share' : ' tips');
     if (s.dupeOf) meta += ' · <span class="flag">possible duplicate</span>';
@@ -298,13 +301,13 @@ function detailHtml(s, i) {
       h += '<br><span class="est">Estimated — this row predates the pay columns, '
          + 'so these are recomputed, not stored.</span>';
     }
-    if (s.pay.source === 'estimate') {
-      h += '<br><span class="est">Estimated — Vermont withholding, not yet checked '
-         + 'against a real paystub. Tips are shared across the week by hours, so '
-         + 'every shift that week shows the same $/hr.</span>';
+    if (s.pay.source === 'period') {
+      h += '<br><span class="est">Priced with its 2-week paycheck: tax and tips are '
+         + 'shared across the pay period by hours, so every shift in it shows the '
+         + 'same $/hr. Withholding matches the 10/23 paystub.</span>';
     }
     if (s.pay.tipsLogged === false) {
-      h += '<br><span class="est">This week\'s tips aren\'t logged yet — this is '
+      h += '<br><span class="est">No tips logged for this pay period yet — this is '
          + 'wage only. Log them as e.g. "dorset tips 380".</span>';
     }
   }

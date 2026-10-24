@@ -1929,117 +1929,149 @@ if (new URLSearchParams(location.search).get('test') === '1') {
   });
 
   // ---- DORSET INN PAY (server/dorsetPay.js) ----
-  // Vermont 2026, single, 0 allowances: annual wages, the GB-1210-2026 table,
-  // then /52. Every expected figure here was worked out by hand from the
-  // published table, not read back from the implementation.
-  test('vtWeekly: $500/week → $14.22', () => {
-    // 26,000 − 3,925 = 22,075 × 3.35% = 739.51 / 52
-    assertEq(round2(vtWeekly(500)), 14.22);
+  // Fitted to the first stub (check 10/23/2026): biweekly, Vermont S/0, plus
+  // the VT Child Care Contribution. Expected figures were derived separately
+  // from the published tables, not read back from the implementation.
+  test('Dorset paystub 10/23/2026: every deduction line to the penny', () => {
+    const d = dorsetPaycheckDeductions(910.02);
+    assertEq(d.federal, 29.08, 'Fed (T/0)');
+    assertEq(d.fica, 56.42, 'OASDI');
+    assertEq(d.medicare, 13.20, 'Medicare');
+    assertEq(d.vt, 25.43, 'VT (S/0)');
+    assertEq(d.ccc, 1.00, 'VT CCC EE');
+    assertEq(d.total, 125.13, 'Total Deductions');
+    assertEq(dorsetPaycheckNet(910.02), 784.89, 'NET PAY');
   });
-  test('vtWeekly: under the zero band withholds nothing', () => {
-    assertEq(vtWeekly(70), 0);    // 3,640/yr is under 3,925
-    assertEq(vtWeekly(0), 0);
-  });
-  test('vtWeekly: crosses into the 6.6% band at $1,200/week', () => {
-    // 1,700.13 on the first 54,675 + 6.6% × 7,725 = 2,209.98 / 52
-    assertEq(round2(vtWeekly(1200)), 42.5);
-  });
-  test('dorsetWeeklyDeductions: no NY lines — no PFL, no SDI', () => {
-    const d = dorsetWeeklyDeductions(480);
-    assertEq(d.fica, 29.76);
-    assertEq(d.medicare, 6.96);
-    assertEq(d.federal, 17.04);
-    assertEq(d.vt, 13.55);
-    assertEq(d.total, 67.31);
+  test('Dorset paystub: no NY lines — no PFL, no SDI', () => {
+    const d = dorsetPaycheckDeductions(480);
     assert(!('pfl' in d) && !('sdi' in d), 'Vermont has no NY payroll lines');
   });
+  test('vtPerPeriod: annualizes by 26 — $500/paycheck → $11.69', () => {
+    // 13,000 − 3,925 = 9,075 × 3.35% = 304.01 / 26
+    assertEq(round2(vtPerPeriod(500)), 11.69);
+  });
+  test('vtPerPeriod: under the zero band withholds nothing', () => {
+    assertEq(vtPerPeriod(150), 0);    // 3,900/yr is under 3,925
+    assertEq(vtPerPeriod(0), 0);
+  });
+  test('vtPerPeriod: crosses into the 6.6% band at $2,400/paycheck', () => {
+    // 1,700.13 on the first 54,675 + 6.6% × 7,725 = 2,209.98 / 26
+    assertEq(round2(vtPerPeriod(2400)), 85);
+  });
+  test('federalForPeriod: weekly Track figures are unchanged by the refactor', () => {
+    assertEq(federalWeekly(480), federalForPeriod(480, 52));
+    assertEq(round2(federalWeekly(480)), 17.04);
+  });
 
-  test('allocateDorsetWeek: tips are taxed with the wage', () => {
-    // 18h × $10 = 180 wage + 300 tips = 480 gross; 480 − 67.31 = 412.69.
-    const a = allocateDorsetWeek([6, 5, 7], 300);
-    assertEq(a.week.gross, 480);
-    assertEq(a.week.net, 412.69);
-    assert(a.week.net < 180 + 300, 'tips go through payroll, so they are taxed');
+  test('dorsetPeriodStart: two-week periods, Sunday to Saturday, from Oct 4 2026', () => {
+    const at = (y, m, d, h) => dorsetPeriodStart(new Date(y, m, d, h || 12)).getTime();
+    assertEq(at(2026, 9, 4), new Date(2026, 9, 4).getTime(), 'first stub begin');
+    assertEq(at(2026, 9, 17, 23), new Date(2026, 9, 4).getTime(), 'first stub end, late');
+    assertEq(at(2026, 9, 18, 0), new Date(2026, 9, 18).getTime(), 'next period');
+    assertEq(at(2026, 9, 3), new Date(2026, 8, 20).getTime(), 'before the anchor');
+    assertEq(at(2026, 10, 1), new Date(2026, 10, 1).getTime(), 'DST ends that day');
+    assertEq(at(2026, 10, 14, 23), new Date(2026, 10, 1).getTime(), 'across DST');
+    assertEq(dorsetPeriodKey(new Date(2026, 9, 10)), '2026-10-04');
   });
-  test('allocateDorsetWeek: splits by hours and sums to the week exactly', () => {
-    const a = allocateDorsetWeek([6, 5, 7], 300);
-    assertEq(a.rows.map((r) => r.takeHome).join(','), '137.56,114.64,160.49');
-    assertEq(a.rows.map((r) => r.tipsShare).join(','), '100,83.33,116.67');
-    assertEq(a.rows.map((r) => r.grossWage).join(','), '60,50,70');
-    // The last row takes the rounding remainder, so nothing leaks a cent.
-    assertEq(round2(a.rows.reduce((n, r) => n + r.takeHome, 0)), 412.69);
-    assertEq(round2(a.rows.reduce((n, r) => n + r.tipsShare, 0)), 300);
+
+  test('dorsetPeriodStart: setting 52 periods a year makes them weekly Sun–Sat', () => {
+    const was = DORSET_PERIODS_PER_YEAR;
+    try {
+      DORSET_PERIODS_PER_YEAR = 52;
+      assertEq(dorsetPeriodStart(new Date(2026, 9, 14)).getTime(), new Date(2026, 9, 11).getTime());
+      assertEq(dorsetPeriodStart(new Date(2026, 9, 10)).getTime(), new Date(2026, 9, 4).getTime());
+    } finally { DORSET_PERIODS_PER_YEAR = was; }
   });
-  test('allocateDorsetWeek: every shift in a week earns the same hourly', () => {
-    // Tips are weekly, so no single day can claim a better rate than another.
-    const a = allocateDorsetWeek([6, 5, 7], 300);
-    assertEq(a.week.effectiveHourly, 22.93);
-    for (const r of a.rows) assertEq(r.effectiveHourly, 22.93);
+
+  // The real 10/4–10/17 shifts as logged (24.76h) plus that stub's $531 tips.
+  const PERIOD_HOURS = [6.4, 6.2, 6.33, 5.83];
+  test('allocateDorsetPeriod: tips are taxed with the wage', () => {
+    // 24.76h × $10 = 247.60 + 531 = 778.60; − 97.39 withheld = 681.21.
+    const a = allocateDorsetPeriod(PERIOD_HOURS, 531);
+    assertEq(a.period.gross, 778.6);
+    assertEq(a.period.deductions.total, 97.39);
+    assertEq(a.period.net, 681.21);
   });
-  test('allocateDorsetWeek: net wage + tips share = take-home, per shift', () => {
-    const a = allocateDorsetWeek([6, 5, 7], 300);
+  test('allocateDorsetPeriod: splits by hours and sums to the paycheck exactly', () => {
+    const a = allocateDorsetPeriod(PERIOD_HOURS, 531);
+    assertEq(a.rows.map((r) => r.takeHome).join(','), '176.08,170.58,174.15,160.4');
+    assertEq(a.rows.map((r) => r.tipsShare).join(','), '137.25,132.96,135.75,125.04');
+    assertEq(a.rows.map((r) => r.grossWage).join(','), '64,62,63.3,58.3');
+    assertEq(round2(a.rows.reduce((n, r) => n + r.takeHome, 0)), 681.21);
+    assertEq(round2(a.rows.reduce((n, r) => n + r.tipsShare, 0)), 531);
+  });
+  test('allocateDorsetPeriod: every shift in a period earns the same hourly', () => {
+    const a = allocateDorsetPeriod(PERIOD_HOURS, 531);
+    assertEq(a.period.effectiveHourly, 27.51);
+    for (const r of a.rows) assertEq(r.effectiveHourly, 27.51);
+  });
+  test('allocateDorsetPeriod: net wage + tips share = take-home, per shift', () => {
+    const a = allocateDorsetPeriod(PERIOD_HOURS, 531);
     for (const r of a.rows) assertEq(round2(r.netWage + r.tipsShare), r.takeHome);
   });
-  test('allocateDorsetWeek: before tips are logged, wage only', () => {
-    // 11h × $10 = 110; FICA 6.82 + Medicare 1.60 + VT 1.16, no federal.
-    const a = allocateDorsetWeek([6, 5], 0);
-    assertEq(a.week.net, 100.42);
+  test('allocateDorsetPeriod: before tips are logged, wage only', () => {
+    const a = allocateDorsetPeriod([6.4, 6.2], 0);
+    assertEq(a.period.gross, 126);
     for (const r of a.rows) assertEq(r.tipsShare, 0);
+    assert(a.period.net < 126, 'FICA still comes out');
   });
-  test('allocateDorsetWeek: no break is deducted', () => {
-    assertEq(allocateDorsetWeek([6], 0).week.hours, 6);
+  test('allocateDorsetPeriod: no break is deducted', () => {
+    assertEq(allocateDorsetPeriod([6], 0).period.hours, 6);
   });
 
-  test('dorsetTipsWeekDate: Monday through Saturday mean the week just ended', () => {
-    const sun = new Date(2026, 9, 11, 20, 0, 0).getTime();   // Sun Oct 11
-    assertEq(dorsetTipsWeekDate(new Date(2026, 9, 12, 10, 0)).getTime(), sun, 'Mon');
-    assertEq(dorsetTipsWeekDate(new Date(2026, 9, 15, 18, 0)).getTime(), sun, 'Thu payday');
-    assertEq(dorsetTipsWeekDate(new Date(2026, 9, 10, 9, 0)).getTime(),
-      new Date(2026, 9, 4, 20, 0, 0).getTime(), 'Sat → the week before');
+  test('dorsetTipsWeekDate: Sunday through Friday mean the week ending last Saturday', () => {
+    const sat = new Date(2026, 9, 17, 20, 0, 0).getTime();   // Sat Oct 17
+    assertEq(dorsetTipsWeekDate(new Date(2026, 9, 18, 10, 0)).getTime(), sat, 'Sun');
+    assertEq(dorsetTipsWeekDate(new Date(2026, 9, 23, 18, 0)).getTime(), sat, 'Fri payday');
   });
-  test('dorsetTipsWeekDate: Sunday means the week ending today', () => {
-    assertEq(dorsetTipsWeekDate(new Date(2026, 9, 11, 22, 30)).getTime(),
-      new Date(2026, 9, 11, 20, 0, 0).getTime());
+  test('dorsetTipsWeekDate: Saturday means the week ending today', () => {
+    assertEq(dorsetTipsWeekDate(new Date(2026, 9, 24, 22, 30)).getTime(),
+      new Date(2026, 9, 24, 20, 0, 0).getTime());
   });
 
   const DORSET_ROWS = () => [
     ['Timestamp', 'Clock In', 'Clock Out', 'Hours', 'Tips', 'Notes',
      'Gross Wage', 'Tips Share', 'Est. Net Wage', 'Total Take-Home', 'Eff. $/hr'],
-    [new Date(2026, 9, 6, 22, 0),  '4:00pm', '10:00pm', 6, '', '', '', '', '', '', ''],
-    [new Date(2026, 9, 7, 22, 0),  '5:00pm', '10:00pm', 5, '', '', '', '', '', '', ''],
-    [new Date(2026, 9, 9, 23, 0),  '4:00pm', '11:00pm', 7, '', '', '', '', '', '', ''],
-    [new Date(2026, 9, 11, 20, 0), '', '', '', 300, 'weekly tips', '', '', '', '', ''],
-    // Following week: shifts logged, tips not yet.
-    [new Date(2026, 9, 13, 22, 0), '4:00pm', '10:00pm', 6, '', '', '', '', '', '', '']
+    [new Date(2026, 9, 9, 23, 48),  '4:00pm', '10:24pm', 6.4,  '', '', '', '', '', '', ''],
+    [new Date(2026, 9, 10, 22, 23), '4:00pm', '10:12pm', 6.2,  '', '', '', '', '', '', ''],
+    [new Date(2026, 9, 10, 20, 0),  '', '', '', 300, 'weekly tips', '', '', '', '', ''],
+    [new Date(2026, 9, 11, 22, 23), '4:00pm', '10:20pm', 6.33, '', '', '', '', '', '', ''],
+    [new Date(2026, 9, 14, 20, 0),  '4:00pm', '9:50pm',  5.83, '', '', '', '', '', '', ''],
+    [new Date(2026, 9, 17, 20, 0),  '', '', '', 231, 'weekly tips', '', '', '', '', ''],
+    // Next pay period: a shift logged, tips not yet.
+    [new Date(2026, 9, 18, 21, 33), '4:00pm', '9:31pm',  5.52, '', '', '', '', '', '', '']
   ];
-  test('readDorsetShifts: the tips row is not a shift', () => {
+  test('readDorsetShifts: tips rows are not shifts', () => {
     const s = readDorsetShifts(DORSET_ROWS());
-    assertEq(s.length, 4);
+    assertEq(s.length, 5);
     assert(s.every((x) => x.hours > 0), 'only rows with hours are shifts');
   });
-  test('readDorsetShifts: each shift carries its share of that week', () => {
+  test('readDorsetShifts: both weeks\' tips pool into one paycheck', () => {
+    // 300 + 231 = the stub's 531, shared over the whole period by hours.
     const s = readDorsetShifts(DORSET_ROWS());
-    assertEq(s[0].venue, 'Dorset Inn');
-    assertEq(s.slice(0, 3).map((x) => x.pay.takeHome).join(','), '137.56,114.64,160.49');
-    assertEq(s.slice(0, 3).map((x) => x.tips).join(','), '100,83.33,116.67');
+    assertEq(s.slice(0, 4).map((x) => x.pay.takeHome).join(','), '176.08,170.58,174.15,160.4');
+    assertEq(s.slice(0, 4).map((x) => x.tips).join(','), '137.25,132.96,135.75,125.04');
     assertEq(s[0].pay.tipsLogged, true);
   });
-  test('readDorsetShifts: a week with no tips yet says so', () => {
+  test('readDorsetShifts: a period with no tips yet says so', () => {
     const s = readDorsetShifts(DORSET_ROWS());
-    assertEq(s[3].pay.tipsLogged, false);
-    assertEq(s[3].tips, 0);
+    assertEq(s[4].pay.tipsLogged, false);
+    assertEq(s[4].tips, 0);
   });
-  test('readDorsetShifts: marked as an estimate until a paystub calibrates it', () => {
-    assertEq(readDorsetShifts(DORSET_ROWS())[0].pay.source, 'estimate');
+  test('readDorsetShifts: priced as a share of the pay period', () => {
+    assertEq(readDorsetShifts(DORSET_ROWS())[0].pay.source, 'period');
   });
-  test('dorsetComputeRows: tips written on a shift row join the weekly pool', () => {
-    const rows = DORSET_ROWS().slice(0, 4);
-    rows[1][4] = 300;                       // the tips moved onto Tue's shift
+  test('readDorsetShifts: week stays the shared Mon–Sun display bucket', () => {
+    const s = readDorsetShifts(DORSET_ROWS());
+    assertEq(s[3].week, payWeekKey(new Date(2026, 9, 14)));
+  });
+  test('dorsetComputeRows: tips written on a shift row join the period pool', () => {
+    const rows = DORSET_ROWS().slice(0, 6).filter((r, i) => i !== 3);
+    rows[1][4] = 531;                        // the tips said alongside a shift
     const c = dorsetComputeRows(rows);
-    assertEq(c.weeks['2026-10-05'].tips, 300);
-    assertEq(c.weeks['2026-10-05'].net, 412.69);
+    assertEq(c.periods['2026-10-04'].tips, 531);
+    assertEq(c.periods['2026-10-04'].net, 681.21);
   });
-
   test('summarize: Dorset and Track take-home add up — both are after tax', () => {
     const d = readDorsetShifts(DORSET_ROWS())[0];
     const s = summarize([TRACK(new Date(2026, 7, 2), 9.17, 242, 353.86, 111.86), d,
@@ -2063,11 +2095,11 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assert(src.indexOf('getOrCreateTab(ss, DORSET_VENUE, DORSET_HEADERS)') !== -1,
       'first use creates the tab — no manual sheet setup');
   });
-  test('router: every Dorset log recomputes its week', async () => {
+  test('router: every Dorset log re-prices the tab', async () => {
     const src = await fetchText('server/routerWebApp.gs');
     const body = src.slice(src.indexOf('function handleDorset'));
-    assert(body.indexOf('tab.appendRow(') < body.indexOf('recomputeDorsetWeek(tab, ts)'),
-      'append, then recompute — weekly tips change every shift in that week');
+    assert(body.indexOf('tab.appendRow(') < body.indexOf('recomputeDorsetTab(tab, ts)'),
+      'append, then recompute — tips change every shift in that pay period');
   });
   test('router: a missing Dorset tab cannot break the shifts read', async () => {
     const src = await fetchText('server/routerWebApp.gs');
@@ -2184,9 +2216,9 @@ if (new URLSearchParams(location.search).get('test') === '1') {
     assertEq(contiguousRow([], []), null);
     assertEq(contiguousRow([4, 4], [1, 2]), null, 'a repeated column is not a range');
   });
-  test('router: both week recomputes write through writeCells', async () => {
+  test('router: both recomputes write through writeCells', async () => {
     const src = await fetchText('server/routerWebApp.gs');
-    for (const fn of ['function recomputeTrackWeek', 'function recomputeDorsetWeek']) {
+    for (const fn of ['function recomputeTrackWeek', 'function recomputeDorsetTab']) {
       const body = src.slice(src.indexOf(fn), src.indexOf('\n}\n', src.indexOf(fn)));
       assert(body.indexOf('writeCells(') !== -1, fn + ' must batch its writes');
       assert(body.indexOf('.setValue(') === -1, fn + ' must not write cell by cell');

@@ -1,5 +1,5 @@
 // ================================================================
-// Log It — Router Web App  (v4.9 — Dorset Inn; Track closed for the season)
+// Log It — Router Web App  (v4.10 — Dorset priced per biweekly paycheck, fitted to the 10/23 stub)
 // Live project "Log It - Router". Deploy: Web App | Execute as: Me | Anyone.
 //
 // FILES — one Apps Script project, ONE shared global scope. Live names differ
@@ -415,10 +415,10 @@ function handleDeleteShift(body) {
   // Susans is flat $20/hr with nothing derived from the week, so there is
   // nothing to repair. Track's stored net for every OTHER row in the week was
   // computed as though these hours were in it, so they are all now wrong.
-  // Dorset re-prices the whole week too: one fewer shift changes everyone's
-  // share of the week's tips and withholding.
+  // Dorset re-prices too: one fewer shift changes everyone's share of the
+  // pay period's tips and withholding.
   var recomputed = venue === 'Track' ? recomputeTrackWeek(tab, ts)
-                 : venue === DORSET_VENUE ? recomputeDorsetWeek(tab, ts).changed
+                 : venue === DORSET_VENUE ? recomputeDorsetTab(tab, ts).changed
                  : [];
   return { success: true, deleted: ts.toISOString(), recomputed: recomputed };
 }
@@ -624,8 +624,8 @@ function handleDorset(ss, data, shift) {
 
   var ts;
   if (tipsOnly) {
-    // A named day wins ("tips for last week"); otherwise the week just ended,
-    // so tips logged on payday do not land in the week they were paid in.
+    // A named day wins ("tips for last week"); otherwise the Sun–Sat week just
+    // ended, so tips logged on payday do not land in the week they were paid in.
     ts = (shift && shift.reason === 'ok') ? shift.date : dorsetTipsWeekDate(now());
   } else {
     ts = (shift && shift.date instanceof Date) ? shift.date : now();
@@ -635,18 +635,20 @@ function handleDorset(ss, data, shift) {
                  hrs > 0 ? hrs : '', tips > 0 ? tips : '', data.notes || '',
                  '', '', '', '', '']);
   formatDorsetRow(tab, tab.getLastRow());
-  var result = recomputeDorsetWeek(tab, ts);
-  var week   = result.week;
-  var weekOf = shortDateLabel(payWeekStart(ts));
+  var result = recomputeDorsetTab(tab, ts);
+  var period = result.period;
+  var start  = dorsetPeriodStart(ts);
+  var label  = shortDateLabel(start) + ' – '
+             + shortDateLabel(new Date(start.getFullYear(), start.getMonth(), start.getDate() + 13));
 
   if (tipsOnly) {
-    if (!week || !week.shifts) {
-      return 'Dorset tips $' + tips + ' logged for the week of ' + weekOf
-           + ' — no shifts logged that week yet; it will price when they are';
+    if (!period || !period.shifts) {
+      return 'Dorset tips $' + tips + ' logged for the pay period ' + label
+           + ' — no shifts logged in it yet; it will price when they are';
     }
-    return 'Dorset tips $' + tips + ' logged for the week of ' + weekOf
-         + ' · week take-home est. $' + week.net.toFixed(2)
-         + ' ($' + week.effectiveHourly.toFixed(2) + '/hr)';
+    return 'Dorset tips $' + tips + ' logged for the pay period ' + label
+         + ' · paycheck est. $' + period.net.toFixed(2)
+         + ' ($' + period.effectiveHourly.toFixed(2) + '/hr)';
   }
 
   var back = !!(shift && shift.backdated);
@@ -654,14 +656,18 @@ function handleDorset(ss, data, shift) {
   var msg  = 'Dorset Inn logged' + (back ? ' for ' + shortDateLabel(ts) : '')
            + ' — ' + hrs + 'h, $' + (hrs * DORSET_WAGE_RATE).toFixed(2) + ' wage';
   if (mine) msg += ' · est. take-home $' + mine.takeHome.toFixed(2);
-  if (week && !week.tipsLogged) msg += ' before tips';
+  if (period && !period.tipsLogged) msg += ' before tips';
   return msg;
 }
 
-// Rewrite the computed columns for every shift in the pay week containing ts.
-// Returns { week, changed, mine } — `mine` is the row just appended, if it is
-// a shift, so the confirmation card can quote its share.
-function recomputeDorsetWeek(tab, ts) {
+// Re-price the whole tab and rewrite the computed columns of every shift row
+// whose stored values are out of date. Whole tab rather than one period: it is
+// small, a write only happens where something changed, and stored values from
+// an older model (weekly pricing, before the first stub) heal on the next log.
+// Returns { period, changed, mine } — `period` is the one containing ts;
+// `mine` is the row just appended, if it is a shift, so the confirmation card
+// can quote its share.
+function recomputeDorsetTab(tab, ts) {
   var rows = tab.getDataRange().getValues();
   var h    = rows[0];
   var cTs  = columnForHeader(h, 'Timestamp');
@@ -676,22 +682,27 @@ function recomputeDorsetWeek(tab, ts) {
     if (cols[f] === -1) throw new Error('Dorset Inn tab is missing a pay column (' + f + ')');
   }
 
-  var calc = dorsetComputeRows(rows);
-  var key  = payWeekKey(ts);
+  var calc  = dorsetComputeRows(rows);
+  var order = [cols.grossWage, cols.tipsShare, cols.netWage, cols.takeHome, cols.effectiveHourly];
   var changed = [], mine = null, last = rows.length;
 
   for (var i = 1; i < rows.length; i++) {
     var r = rows[i];
-    if (!r || !(r[cTs] instanceof Date) || payWeekKey(r[cTs]) !== key) continue;
+    if (!r || !(r[cTs] instanceof Date)) continue;
     var out = calc.byRow[i + 1];
-    if (!out) continue;   // the tips row: its own columns stay blank
-    writeCells(tab, i + 1,
-      [cols.grossWage, cols.tipsShare, cols.netWage, cols.takeHome, cols.effectiveHourly],
-      [out.grossWage, out.tipsShare, out.netWage, out.takeHome, out.effectiveHourly]);
-    changed.push(r[cTs].toISOString());
+    if (!out) continue;   // a tips row: its own columns stay blank
     if (i + 1 === last) mine = out;
+    var values = [out.grossWage, out.tipsShare, out.netWage, out.takeHome, out.effectiveHourly];
+    var stale = false;
+    for (var j = 0; j < order.length; j++) {
+      if (cellNumber(r[order[j]]) !== values[j]) { stale = true; break; }
+    }
+    if (!stale) continue;
+    writeCells(tab, i + 1, order, values);
+    changed.push(r[cTs].toISOString());
   }
-  return { week: calc.weeks[key] || null, changed: changed, mine: mine };
+  var period = ts instanceof Date ? calc.periods[dorsetPeriodKey(ts)] || null : null;
+  return { period: period, changed: changed, mine: mine };
 }
 
 // Positions follow DORSET_HEADERS, which this file wrote when it created the

@@ -5,20 +5,20 @@ Detail for any line below is in its commit (`git log --oneline`, then `git show 
 
 ## Now
 
-- **Live:** router **v4.9.3** at deployment `AKfycbx4Vyy…` **@23**; front end on Pages from `Main`.
+- **Live:** router **v4.10** at deployment `AKfycbx4Vyy…` **@24**; front end on Pages from `Main`.
 - **Jobs:** **Dorset Inn** is the current job (busser, $10/hr, weekly tips through payroll, Vermont).
   **Track is closed** until next season (`TRACK_SEASON_OPEN = false`). Susans is finished.
-- **First real Dorset shift** logged 2026-10-09: 4:00pm → 10:24pm, 6.4h, $59.10 est. take-home,
-  tips pending. It created the `Dorset Inn` tab.
-- **Tests:** browser suite **287 passed, 0 failed**; `node tools/gas-sim.js` 15/15.
+- **Dorset is fitted** to the first stub (check 10/23/2026, period 10/4–10/17: $910.02 gross →
+  $784.89 net, every line to the penny). Its $531 Charge Tips are logged (dated 10/17). The stub paid
+  32.2h vs 24.76h logged — the user is checking their days with work; 12.9h were training at $14.42.
+- **Tests:** browser suite **292 passed, 0 failed**; `node tools/gas-sim.js` all pass.
 - **The user has set:** `READ_TOKEN` and `GEMINI_API_KEY` in Script Properties, the Ideas `Status`
   and Materials `Got it` headers, and the read key on the phone.
 
 ## Next
 
-1. **Re-fit Dorset withholding to the first paystub** (GUIDE → "Re-fit withholding"): check
-   `VT_ALLOWANCES`, the pay-week boundary, and that tips appear on the stub. Until then every
-   Dorset figure is marked as an estimate.
+1. **Confirm biweekly on the next stub** (expected ~11/6 for 10/18–10/31). If it's weekly instead,
+   set `DORSET_PERIODS_PER_YEAR = 52`, update the period tests, deploy.
 2. **Reopen Track next season** (late June): flip `TRACK_SEASON_OPEN`, update its test, deploy.
 3. **Offline queue** (deferred on purpose): a service worker that caches the shell *and* queues
    failed logs. It interacts with `submitWithRetry` and needs its own spec. A shell-only cache is not
@@ -64,3 +64,4 @@ Detail for any line below is in its commit (`git log --oneline`, then `git show 
 | 19 | v4.8: shifts + ideas pages, read/patch/delete ops behind `READ_TOKEN`; drill-down chart, drag-to-reorder ideas, in-app dialogs, `?v=` asset versioning |
 | 20 | v4.9: Dorset Inn — weekly-priced pay, Vermont withholding, tips taxed via payroll |
 | 21 | v4.9.1–4.9.3: Track closed for the season (`seasonGate`); evening clock-out fix; Sheets time values read as clock times; batched sheet writes; deploy script; server simulator; this docs restructure |
+| 22 | v4.10: Dorset fitted to the first stub — biweekly pay periods, VT CCC, whole-tab re-pricing |

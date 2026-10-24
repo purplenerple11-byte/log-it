@@ -71,10 +71,12 @@ function samePayWeek(a, b) {
   return payWeekStart(a).getTime() === payWeekStart(b).getTime();
 }
 
-// Federal withholding for one weekly paycheck.
-function federalWeekly(gross) {
+// Federal withholding for one paycheck, unrounded: annualize, apply the table,
+// divide back. `periodsPerYear` is 52 for Track (weekly), 26 for Dorset
+// (biweekly) — the same gross withholds differently on each.
+function federalForPeriod(gross, periodsPerYear) {
   if (!(gross > 0)) return 0;
-  var taxable = Math.max(0, gross * 52 - FED_STD_DEDUCTION);
+  var taxable = Math.max(0, gross * periodsPerYear - FED_STD_DEDUCTION);
   var tax = 0, floor = 0;
   for (var i = 0; i < FED_BRACKETS.length; i++) {
     var ceiling = FED_BRACKETS[i][0], rate = FED_BRACKETS[i][1];
@@ -82,7 +84,12 @@ function federalWeekly(gross) {
     tax += (ceiling - floor) * rate;
     floor = ceiling;
   }
-  return tax / 52;
+  return tax / periodsPerYear;
+}
+
+// Federal withholding for one weekly paycheck.
+function federalWeekly(gross) {
+  return federalForPeriod(gross, 52);
 }
 
 // NY State withholding for one weekly paycheck. Floored at 0 — the fitted line

@@ -1,38 +1,43 @@
 // ================================================================
 // Log It — Dorset Inn pay & withholding (pure logic, no Apps Script APIs)
-// File: server/dorsetPay.js   →   paste into Apps Script as dorsetPay.gs
+// File: server/dorsetPay.js   →   live file dorsetPay
 //
 // WHAT THIS IS
-// Busser at the Dorset Inn: $10/hr plus tips. Tips arrive ONCE A WEEK, not
-// per shift, and they go through payroll — so they are taxed together with the
-// wage. That one fact shapes everything below.
+// Busser at the Dorset Inn (Church Street Hospitality): $10/hr plus tips. Tips
+// go through payroll ("Charge Tips" on the stub), so they are taxed together
+// with the wage. That one fact shapes everything below.
 //
-// WHY A SHIFT'S PAY IS A SHARE OF ITS WEEK
-// Withholding is assessed on the whole weekly paycheck (wage + tips), and the
-// tips for a week are not known until the week is over. So a shift has no pay
-// of its own: the week is priced as a whole, and each shift gets the slice of
-// it proportional to its hours. Every shift in a week therefore shows the same
-// effective $/hr — no single night can claim the tips, because nobody knows
-// which night earned them. When the weekly tips are logged, every shift in
-// that week is recomputed.
+// FITTED TO THE FIRST PAYSTUB (check 10/23/2026, period 10/4–10/17)
+// Paid BIWEEKLY, Sunday to Saturday. On $910.02 gross the stub withheld
+// Fed (Single) 29.08, OASDI 56.42, Medicare 13.20, VT (S/0) 25.43,
+// VT CCC 1.00 → net 784.89. This file reproduces every line to the penny
+// (tests.js, "Dorset paystub"). That stub also paid 12.9 training hours at
+// $14.42 (Vermont's full minimum wage); training is over, so it isn't modelled.
 //
-// ESTIMATE, NOT CALIBRATED
-// Track's withholding was fitted to two real paystubs and reproduces both to
-// the penny. This has no paystub yet. Federal and FICA are standard; Vermont
-// is the real 2026 table (Vermont Dept of Taxes GB-1210-2026), but the
-// allowance count and the pay-week boundary are assumptions. Re-check both
-// against the first stub: VT_ALLOWANCES, and whether the week is Mon-Sun.
+// WHY A SHIFT'S PAY IS A SHARE OF ITS PAY PERIOD
+// Withholding is assessed on the whole paycheck (two weeks of wage + tips),
+// and tips are only known after the week. So a shift has no pay of its own:
+// the period is priced as a whole, and each shift gets the slice proportional
+// to its hours. Every shift in a period therefore shows the same effective
+// $/hr. When tips are logged, every shift in that period is recomputed.
 //
 // No module syntax and no Apps Script calls on purpose: the same file runs in
 // the browser test harness and inside Apps Script, where every file shares ONE
 // global scope. Every top-level name here is prefixed dorset/DORSET/vt/VT so it
-// cannot collide with trackPay.gs, which it calls into (round2, federalWeekly,
-// payWeekStart, FICA_RATE, MEDICARE_RATE) along with readApi.gs
-// (columnForHeader, cellNumber, cellText, cellClock, payWeekKey).
+// cannot collide with trackPay.gs, which it calls into (round2, federalForPeriod,
+// FICA_RATE, MEDICARE_RATE) along with readApi.gs (columnForHeader, cellNumber,
+// cellText, cellClock, payWeekKey, localDayKey).
 // ================================================================
 
 var DORSET_VENUE     = 'Dorset Inn';
 var DORSET_WAGE_RATE = 10.00;   // $/hr cash wage. Update on a raise.
+
+// Pay periods start on a Sunday and are counted from the first stub's Period
+// Begin. 26 a year (14 days) is what that stub's withholding was computed by —
+// weekly tables would have withheld ~$67 federal, not $29.08. If a later stub
+// turns out weekly, set 52: period length and withholding both follow.
+var DORSET_PERIOD_ANCHOR    = [2026, 9, 4];   // Sun Oct 4 2026 (month is 0-based)
+var DORSET_PERIODS_PER_YEAR = 26;
 
 // The router creates the tab with exactly this layout on first use, so the
 // column positions in formatDorsetRow can rely on it. Lookups still go by
@@ -42,13 +47,10 @@ var DORSET_HEADERS = ['Timestamp', 'Clock In', 'Clock Out', 'Hours', 'Tips', 'No
                       'Gross Wage', 'Tips Share', 'Est. Net Wage', 'Total Take-Home',
                       'Eff. $/hr'];
 
-// Vermont 2026, Single. Annual wages less allowances, then this table, then /52.
-// Cross-checked against the weekly wage chart in the same publication: $3,925/52
-// and $54,675/52 are its $75 and $1,051 cutoffs, and $1,700.13 is exactly
-// 3.35% x $50,750.
+// Vermont 2026, Single (GB-1210-2026). Annual wages less allowances, then this
+// table, then divided back per paycheck. The stub says "VT (S/0)": 0 allowances.
 var VT_ALLOWANCE_ANNUAL = 5400;
-var VT_ALLOWANCES       = 0;    // ASSUMED. Zero withholds slightly more, so take-home
-                                // errs low. Each allowance is worth ~$3.48/week.
+var VT_ALLOWANCES       = 0;    // confirmed by the 10/23/2026 stub
 var VT_BRACKETS = [             // [ceiling of annual taxable wages, rate]
   [3925, 0],
   [54675, 0.0335],
@@ -56,11 +58,31 @@ var VT_BRACKETS = [             // [ceiling of annual taxable wages, rate]
   [260225, 0.076],
   [Infinity, 0.0875]
 ];
+// Vermont Child Care Contribution, employee share ("VT CCC EE" on the stub):
+// 0.11% of gross. $1.00 on $910.02.
+var VT_CCC_RATE = 0.0011;
 
-// Vermont withholding for one weekly paycheck, unrounded.
-function vtWeekly(gross) {
+// Midnight on the Sunday that starts the pay period containing `date`.
+// Math.round absorbs the DST hour: day counts between local midnights are
+// 23 or 25 hours once a year.
+function dorsetPeriodStart(date) {
+  var d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  var a = new Date(DORSET_PERIOD_ANCHOR[0], DORSET_PERIOD_ANCHOR[1], DORSET_PERIOD_ANCHOR[2]);
+  var len  = 364 / DORSET_PERIODS_PER_YEAR;    // 14 days, or 7 if weekly
+  var days = Math.round((d.getTime() - a.getTime()) / 86400000);
+  var back = ((days % len) + len) % len;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - back);
+}
+
+function dorsetPeriodKey(date) {
+  return localDayKey(dorsetPeriodStart(date));
+}
+
+// Vermont withholding for one biweekly paycheck, unrounded.
+function vtPerPeriod(gross) {
   if (!(gross > 0)) return 0;
-  var taxable = Math.max(0, gross * 52 - VT_ALLOWANCES * VT_ALLOWANCE_ANNUAL);
+  var n = DORSET_PERIODS_PER_YEAR;
+  var taxable = Math.max(0, gross * n - VT_ALLOWANCES * VT_ALLOWANCE_ANNUAL);
   var tax = 0, floor = 0;
   for (var i = 0; i < VT_BRACKETS.length; i++) {
     var ceiling = VT_BRACKETS[i][0], rate = VT_BRACKETS[i][1];
@@ -68,32 +90,32 @@ function vtWeekly(gross) {
     tax += (ceiling - floor) * rate;
     floor = ceiling;
   }
-  return tax / 52;
+  return tax / n;
 }
 
-// Every deduction on one weekly Dorset paycheck, each rounded to cents the way
-// a stub prints them. No NY Paid Family Leave and no NY disability: those are
-// New York payroll lines, and this is a Vermont employer.
-function dorsetWeeklyDeductions(gross) {
-  if (!(gross > 0)) return { fica: 0, medicare: 0, federal: 0, vt: 0, total: 0 };
+// Every deduction on one Dorset paycheck, each rounded to cents the way the
+// stub prints them. No NY lines: this is a Vermont employer.
+function dorsetPaycheckDeductions(gross) {
+  if (!(gross > 0)) return { fica: 0, medicare: 0, federal: 0, vt: 0, ccc: 0, total: 0 };
   var d = {
     fica:     round2(gross * FICA_RATE),
     medicare: round2(gross * MEDICARE_RATE),
-    federal:  round2(federalWeekly(gross)),
-    vt:       round2(vtWeekly(gross))
+    federal:  round2(federalForPeriod(gross, DORSET_PERIODS_PER_YEAR)),
+    vt:       round2(vtPerPeriod(gross)),
+    ccc:      round2(gross * VT_CCC_RATE)
   };
-  d.total = round2(d.fica + d.medicare + d.federal + d.vt);
+  d.total = round2(d.fica + d.medicare + d.federal + d.vt + d.ccc);
   return d;
 }
 
-function dorsetWeekNet(gross) {
+function dorsetPaycheckNet(gross) {
   if (!(gross > 0)) return 0;
-  return round2(gross - dorsetWeeklyDeductions(gross).total);
+  return round2(gross - dorsetPaycheckDeductions(gross).total);
 }
 
 // Split `total` across `weights`, rounded to cents, summing to `total` EXACTLY.
-// The last part takes the rounding remainder; without that the rows of a week
-// drift a cent or two away from the week they came from.
+// The last part takes the rounding remainder; without that the rows of a
+// period drift a cent or two away from the paycheck they came from.
 function dorsetSplit(total, weights) {
   var sum = 0, i;
   for (i = 0; i < weights.length; i++) sum += weights[i];
@@ -107,21 +129,21 @@ function dorsetSplit(total, weights) {
   return out;
 }
 
-// Price a whole week, then share it out by hours.
+// Price a whole pay period, then share it out by hours.
 //
-// `hoursList` is the week's shifts, chronological. `weeklyTips` is everything
-// tipped that week — 0 until the tips are logged. No break is deducted.
+// `hoursList` is the period's shifts, chronological. `tips` is everything
+// tipped in the period — 0 until logged. No break is deducted.
 //
 // netWage is take-home minus the tips share: what is left of the wage once the
 // tax on wage AND tips has come out of it. That is how payroll handles tipped
 // work, and it keeps the tips figure equal to what you were actually tipped.
-function allocateDorsetWeek(hoursList, weeklyTips) {
+function allocateDorsetPeriod(hoursList, tips) {
   var hrs = [], i;
   for (i = 0; i < (hoursList || []).length; i++) {
     var h = parseFloat(hoursList[i]);
     hrs.push(isFinite(h) && h > 0 ? h : 0);
   }
-  var tips = parseFloat(weeklyTips);
+  tips = parseFloat(tips);
   if (!isFinite(tips) || tips < 0) tips = 0;
 
   var hoursTotal = 0;
@@ -130,7 +152,7 @@ function allocateDorsetWeek(hoursList, weeklyTips) {
 
   var wageGross = round2(hoursTotal * DORSET_WAGE_RATE);
   var gross     = round2(wageGross + tips);
-  var net       = dorsetWeekNet(gross);
+  var net       = dorsetPaycheckNet(gross);
   var eff       = hoursTotal > 0 ? round2(net / hoursTotal) : 0;
 
   var takeHomes = dorsetSplit(net, hrs);
@@ -148,37 +170,32 @@ function allocateDorsetWeek(hoursList, weeklyTips) {
   }
   return {
     rows: rows,
-    week: {
+    period: {
       hours: hoursTotal, wageGross: wageGross, tips: tips, gross: gross, net: net,
-      effectiveHourly: eff, deductions: dorsetWeeklyDeductions(gross)
+      effectiveHourly: eff, deductions: dorsetPaycheckDeductions(gross)
     }
   };
 }
 
-// Which week a tips entry belongs to when it doesn't name a day: the week that
-// just ended. Logged Monday through Saturday, that is the previous Mon-Sun
-// week; logged on a Sunday, it is the week ending today. Stamped 20:00 on that
-// Sunday — any time inside the week buckets correctly, and the evening is far
+// Which week a tips entry belongs to when it doesn't name a day: the Sun–Sat
+// week that just ended. Logged Sunday through Friday, that is the week ending
+// last Saturday; logged on a Saturday, the week ending today. Stamped 20:00 on
+// that Saturday — inside the right week and pay period either way, and far
 // from midnight so no DST shift can move the day.
-//
-// This is the v4.7 lesson applied in advance: Track priced a shift logged on
-// Wednesday as a fresh week and overstated it by ~$23. Tips logged on payday
-// would do the same thing to the wrong week.
 function dorsetTipsWeekDate(logDate) {
   var d = logDate instanceof Date ? logDate : new Date();
-  if (d.getDay() === 0) return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 20, 0, 0);
-  var monday = payWeekStart(d);
-  return new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() - 1, 20, 0, 0);
+  var back = d.getDay() === 6 ? 0 : d.getDay() + 1;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - back, 20, 0, 0);
 }
 
-// Price every week found in a Dorset tab. `rows` is getDataRange().getValues().
+// Price every pay period found in a Dorset tab. `rows` is getDataRange().getValues().
 //
-// Returns { byRow: {sheetRow: shiftPay}, weeks: {weekKey: weekSummary} }.
-// Rows with hours are shifts; rows with only tips are the weekly tips entries.
-// Tips are pooled per week from ANY row, so a tip amount said alongside a shift
+// Returns { byRow: {sheetRow: shiftPay}, periods: {periodKey: summary} }.
+// Rows with hours are shifts; rows with only tips are tips entries. Tips are
+// pooled per period from ANY row, so a tip amount said alongside a shift
 // still counts instead of vanishing.
 function dorsetComputeRows(rows) {
-  var out = { byRow: {}, weeks: {} };
+  var out = { byRow: {}, periods: {} };
   if (!Array.isArray(rows) || rows.length < 2) return out;
   var h = rows[0];
   var cTs = columnForHeader(h, 'Timestamp');
@@ -189,8 +206,8 @@ function dorsetComputeRows(rows) {
   for (i = 1; i < rows.length; i++) {
     var r = rows[i];
     if (!r || !(r[cTs] instanceof Date)) continue;
-    var key = payWeekKey(r[cTs]);
-    if (!groups[key]) groups[key] = { shifts: [], tips: 0 };
+    var key = dorsetPeriodKey(r[cTs]);
+    if (!groups[key]) groups[key] = { shifts: [], tips: 0, start: dorsetPeriodStart(r[cTs]) };
     var tip = cellNumber(r[cT]) || 0;
     if (tip > 0) groups[key].tips = round2(groups[key].tips + tip);
     var hrs = cellNumber(r[cH]) || 0;
@@ -203,10 +220,11 @@ function dorsetComputeRows(rows) {
     g.shifts.sort(function (a, b) { return a.ts.getTime() - b.ts.getTime(); });
     var hoursList = [];
     for (i = 0; i < g.shifts.length; i++) hoursList.push(g.shifts[i].hours);
-    var a = allocateDorsetWeek(hoursList, g.tips);
-    a.week.tipsLogged = g.tips > 0;
-    a.week.shifts = g.shifts.length;
-    out.weeks[k] = a.week;
+    var a = allocateDorsetPeriod(hoursList, g.tips);
+    a.period.tipsLogged = g.tips > 0;
+    a.period.shifts = g.shifts.length;
+    a.period.start = g.start;
+    out.periods[k] = a.period;
     for (i = 0; i < g.shifts.length; i++) out.byRow[g.shifts[i].row] = a.rows[i];
   }
   return out;
@@ -217,7 +235,8 @@ function dorsetComputeRows(rows) {
 // Pay is computed here from hours and tips rather than read back from the
 // stored columns, so a hand edit to hours or tips in the sheet shows up
 // immediately. The stored columns are a convenience for reading the sheet.
-// Tips-only rows are not shifts and are left out.
+// Tips-only rows are not shifts and are left out. `week` stays the Mon–Sun
+// display bucket every venue shares; pricing is by pay period.
 function readDorsetShifts(rows) {
   if (!Array.isArray(rows) || rows.length < 2) return [];
   var h = rows[0];
@@ -235,7 +254,7 @@ function readDorsetShifts(rows) {
     var hrs = cellNumber(r[cH]) || 0;
     if (!(hrs > 0)) continue;
     var c  = calc.byRow[i + 1];
-    var wk = calc.weeks[payWeekKey(r[cTs])];
+    var p  = calc.periods[dorsetPeriodKey(r[cTs])];
     out.push({
       ts: r[cTs],
       venue: DORSET_VENUE,
@@ -250,10 +269,10 @@ function readDorsetShifts(rows) {
         net: c.netWage,
         takeHome: c.takeHome,
         effHourly: c.effectiveHourly,
-        // 'estimate', not 'sheet': uncalibrated until a real stub. The page
-        // marks these the way it marks Track's recomputed pre-v4.5 rows.
-        source: 'estimate',
-        tipsLogged: !!(wk && wk.tipsLogged)
+        // 'period': priced as a share of its biweekly paycheck. The page
+        // explains that every shift in the period shows the same $/hr.
+        source: 'period',
+        tipsLogged: !!(p && p.tipsLogged)
       },
       dupeOf: null
     });

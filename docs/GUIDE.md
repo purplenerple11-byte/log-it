@@ -95,9 +95,11 @@ that reproduces the stub to the penny. Track's model (`trackPay.js`, fitted to t
 | NY State | fitted line `0.054045 × gross − 10.874`, floored at 0 |
 
 Round each deduction to cents, as stubs do — that is what makes per-shift amounts sum to the week.
-**Dorset (`dorsetPay.js`) has not been fitted yet**: check `VT_ALLOWANCES`, the pay-week boundary,
-and whether tips really appear on the stub. When it matches, the reader's `source` can stop saying
-`'estimate'`.
+**Dorset (`dorsetPay.js`)** is fitted to the 10/23/2026 stub (test "Dorset paystub"): biweekly
+Sun–Sat periods anchored 10/4/2026, federal and Vermont annualized ×26 (`federalForPeriod`), VT S/0,
+VT CCC 0.11%, tips as "Charge Tips" in gross. That stub also paid 12.9 training hours at $14.42
+(VT minimum wage) — one-off, not modelled. A stub's hours can exceed what was logged; compare
+periods by deductions on the stub's own gross, not by the app's total.
 
 ### Open or close Track
 `TRACK_SEASON_OPEN` in `server/tipRouting.js` (the meet runs roughly late June → Labor Day). Update

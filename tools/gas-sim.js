@@ -115,28 +115,49 @@ const SCENARIOS = {
     check('tab created with headers', t && t.data[0].join('|') === G.DORSET_HEADERS.join('|'));
     check('one shift row', t.data.length === 2);
     const h = G.DORSET_HEADERS, row = t.data[1];
-    check('take-home written = 59.10', row[h.indexOf('Total Take-Home')] === 59.1, row.join(','));
-    check('message quotes it', /take-home \$59\.10/.test(msg), msg);
+    // $64 biweekly: FICA 3.97, Medicare 0.93, CCC 0.07; no federal, no VT.
+    check('take-home written = 59.03', row[h.indexOf('Total Take-Home')] === 59.03, row.join(','));
+    check('message quotes it', /take-home \$59\.03/.test(msg), msg);
     check('one setValues for the row, no per-cell writes',
       t.calls.setValues === 1 && t.calls.setValue === 0, JSON.stringify(t.calls));
   },
 
-  'Dorset: weekly tips re-price every shift in that week'() {
-    const G = loadServer(new Date(2026, 9, 12, 10, 0));          // Monday
+  'Dorset: tips re-price every shift in the pay period (the 10/23 stub period)'() {
+    const G = loadServer(new Date(2026, 9, 24, 10, 0));          // Saturday
     const ss = makeSpreadsheet([]);
     const shift = (d, a, b) => G.handleTip(ss, 'Dorset Inn', { clock_in: a, clock_out: b },
       { date: d, backdated: false, reason: 'absent' });
-    shift(new Date(2026, 9, 6, 22), '16:00', '22:00');           // 6h
-    shift(new Date(2026, 9, 7, 22), '17:00', '22:00');           // 5h
-    shift(new Date(2026, 9, 9, 23), '16:00', '23:00');           // 7h
-    const msg = G.handleTip(ss, 'Dorset Inn', { tips: 300 },
-      { date: new Date(2026, 9, 12, 10), backdated: false, reason: 'absent' });
+    shift(new Date(2026, 9, 9, 23, 48), '16:00', '22:24');       // 6.4h
+    shift(new Date(2026, 9, 10, 22, 23), '16:00', '22:12');      // 6.2h
+    shift(new Date(2026, 9, 11, 22, 23), '16:00', '22:20');      // 6.33h
+    shift(new Date(2026, 9, 14, 20, 0), '16:00', '21:50');       // 5.83h
+    shift(new Date(2026, 9, 18, 21, 33), '16:00', '21:31');      // next period
     const t = ss.tabs['Dorset Inn'], h = G.DORSET_HEADERS;
-    const take = t.data.slice(1, 4).map((r) => r[h.indexOf('Total Take-Home')]);
-    check('takes match the hand-computed week', take.join(',') === '137.56,114.64,160.49', take.join(','));
-    check('tips row stamped in the week just ended (Sun Oct 11)',
-      t.data[4][0].getDate() === 11 && t.data[4][0].getDay() === 0, String(t.data[4][0]));
-    check('message gives the week', /412\.69/.test(msg), msg);
+    const before = t.data[5][h.indexOf('Total Take-Home')];
+    t.calls.setValues = 0;
+    const msg = G.handleTip(ss, 'Dorset Inn', { tips: 531 },
+      { date: new Date(2026, 9, 17, 12), backdated: true, reason: 'ok' });
+    const take = t.data.slice(1, 5).map((r) => r[h.indexOf('Total Take-Home')]);
+    check('takes match the hand-derived period', take.join(',') === '176.08,170.58,174.15,160.4', take.join(','));
+    check('message names the period and paycheck', /Oct 0?4\b.* – .*Oct 17.*681\.21/.test(msg), msg);
+    check('next period untouched', t.data[5][h.indexOf('Total Take-Home')] === before);
+    check('only the four changed rows written', t.calls.setValues === 4, JSON.stringify(t.calls));
+  },
+
+  'Dorset: rows priced by the old weekly model heal on the next log'() {
+    const G = loadServer(new Date(2026, 9, 24, 10, 0));
+    const H = ['Timestamp', 'Clock In', 'Clock Out', 'Hours', 'Tips', 'Notes',
+               'Gross Wage', 'Tips Share', 'Est. Net Wage', 'Total Take-Home', 'Eff. $/hr'];
+    // Exactly what the live tab held before the stub: weekly-priced values.
+    const tab = makeTab('Dorset Inn', [H,
+      [new Date(2026, 9, 9, 23, 48), '4:00pm', '10:24pm', 6.4, '', '', 64, 0, 57.82, 57.82, 9.03],
+      [new Date(2026, 9, 18, 21, 33), '4:00pm', '9:31pm', 5.52, '', '', 55.2, 0, 50.36, 50.36, 9.12]]);
+    const ss = makeSpreadsheet([tab]);
+    G.handleTip(ss, 'Dorset Inn', { tips: 531 },
+      { date: new Date(2026, 9, 17, 12), backdated: true, reason: 'ok' });
+    const take = tab.data[2 - 1 + 1][9], next = tab.data[2][9];
+    check('stale row in the tipped period rewritten', take !== 57.82, String(take));
+    check('stale row in another period rewritten too', next !== 50.36 && next > 0, String(next));
   },
 
   'Track: closed for the season, nothing written'() {

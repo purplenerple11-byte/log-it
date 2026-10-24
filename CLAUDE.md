@@ -63,11 +63,12 @@ pipeline on fixture rows with no deploy and no token.
   method) and taxed **incrementally within the Mon–Sun week**: sum the week *before* appending.
   Re-fit on a raise, filing-status change or new tax year. Stamp formats (`formatTrackRow`) — the tab
   is a Sheets Table and appended rows once rendered as 1900-era dates.
-- **Dorset Inn is priced by the week, never the shift.** $10/hr, no break; tips weekly and taxed
-  through payroll with the wage (FICA, Medicare, federal, Vermont 2026 table; no NY lines). Each
-  shift gets an hours-share, so a week has one $/hr; the last row takes the rounding remainder.
-  Tips or a delete re-price the whole week. A tips-only entry with no day → the week just ended.
-  `VT_ALLOWANCES = 0` and Mon–Sun are **assumptions until the first stub**. Tab self-creates.
+- **Dorset Inn is priced by the biweekly paycheck, never the shift.** Fitted to the 10/23/2026 stub
+  to the penny: Sun–Sat periods from 10/4/2026, ×26 annualizing, Vermont S/0, plus VT CCC 0.11%;
+  $10/hr, no break; tips taxed through payroll with the wage; no NY lines. Each shift gets an
+  hours-share, so a period has one $/hr; the last row takes the rounding remainder. Every log or
+  delete re-prices the whole tab (writes only stale rows). Tips with no day → the Sun–Sat week just
+  ended. `DORSET_PERIODS_PER_YEAR` is the one switch if a later stub shows weekly pay. Tab self-creates.
 - **Deleting a Track row invalidates its week** → `recomputeTrackWeek` rewrites the survivors.
 - **Secrets:** Gemini key and `READ_TOKEN` live only in Script Properties, set by hand, never in a
   file. Sheet IDs + Web App URL are deliberately baked into `CFG_DEFAULTS` (public repo, accepted by
